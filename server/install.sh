@@ -59,7 +59,9 @@ systemd-tmpfiles --create /etc/tmpfiles.d/jackbox.conf
 log "Fetching the bot ($BRANCH)"
 if [[ -d $REPO_DIR/.git ]]; then
   sudo -u $APP_USER git -C $REPO_DIR remote set-url origin "$REPO_URL"
-  sudo -u $APP_USER git -C $REPO_DIR fetch -q origin "$BRANCH"
+  # Existing installations may have a single-branch fetch refspec for main.
+  # Explicitly create/update the requested remote-tracking branch as well.
+  sudo -u $APP_USER git -C $REPO_DIR fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
   sudo -u $APP_USER git -C $REPO_DIR checkout -q -B "$BRANCH" "origin/$BRANCH"
 else
   sudo -u $APP_USER git clone -q --branch "$BRANCH" --single-branch "$REPO_URL" $REPO_DIR
