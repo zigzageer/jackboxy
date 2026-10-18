@@ -1,0 +1,19 @@
+{
+  "name": "jackbox-launcher-bot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Discord bot that launches Jackbox games on the host and joins the caller's voice channel.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": { "node": ">=18.17" },
+  "scripts": {
+    "start": "node src/index.js",
+    "register": "node src/register-commands.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.2.3"
+  }
+}

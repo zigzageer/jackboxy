@@ -1,0 +1,89 @@
+{
+  "runner": ["wine"],
+  "packs": {
+    "1": {
+      "name": "The Jackbox Party Pack",
+      "exe": "/opt/jackbox/games/The Jackbox Party Pack 1/The Jackbox Party Pack.exe",
+      "menuDelayMs": 20000,
+      "games": {
+        "ydkj2015": { "name": "You Don't Know Jack 2015", "keys": [] },
+        "drawful": { "name": "Drawful", "keys": [] },
+        "wordspud": { "name": "Word Spud", "keys": [] },
+        "lieswatter": { "name": "Lie Swatter", "keys": [] },
+        "fibbagexl": { "name": "Fibbage XL", "keys": [] }
+      }
+    },
+    "3": {
+      "name": "The Jackbox Party Pack 3",
+      "exe": "/opt/jackbox/games/The Jackbox Party Pack 3/The Jackbox Party Pack 3.exe",
+      "menuDelayMs": 20000,
+      "games": {
+        "quiplash2": { "name": "Quiplash 2", "keys": [] },
+        "triviamurderparty": { "name": "Trivia Murder Party", "keys": [] },
+        "guesspionage": { "name": "Guesspionage", "keys": [] },
+        "teeko": { "name": "Tee K.O.", "keys": [] },
+        "fakinit": { "name": "Fakin' It", "keys": [] }
+      }
+    },
+    "4": {
+      "name": "The Jackbox Party Pack 4",
+      "exe": "/opt/jackbox/games/The Jackbox Party Pack 4/The Jackbox Party Pack 4.exe",
+      "menuDelayMs": 20000,
+      "games": {
+        "fibbage3": { "name": "Fibbage 3", "keys": [] },
+        "survivetheinternet": { "name": "Survive the Internet", "keys": [] },
+        "monsterseekingmonster": { "name": "Monster Seeking Monster", "keys": [] },
+        "bracketeering": { "name": "Bracketeering", "keys": [] },
+        "civicdoodle": { "name": "Civic Doodle", "keys": [] }
+      }
+    },
+    "5": {
+      "name": "The Jackbox Party Pack 5",
+      "exe": "/opt/jackbox/games/The Jackbox Party Pack 5/The Jackbox Party Pack 5.exe",
+      "menuDelayMs": 20000,
+      "games": {
+        "ydkjfullstream": { "name": "You Don't Know Jack: Full Stream", "keys": [] },
+        "splittheroom": { "name": "Split the Room", "keys": [] },
+        "madversecity": { "name": "Mad Verse City", "keys": [] },
+        "zeepledome": { "name": "Zeeple Dome", "keys": [] },
+        "patentlystupid": { "name": "Patently Stupid", "keys": [] }
+      }
+    },
+    "6": {
+      "name": "The Jackbox Party Pack 6",
+      "exe": "/opt/jackbox/games/The Jackbox Party Pack 6/The Jackbox Party Pack 6.exe",
+      "menuDelayMs": 20000,
+      "games": {
+        "triviamurderparty2": { "name": "Trivia Murder Party 2", "keys": [] },
+        "rolemodels": { "name": "Role Models", "keys": [] },
+        "jokeboat": { "name": "Joke Boat", "keys": [] },
+        "dictionarium": { "name": "Dictionarium", "keys": [] },
+        "pushthebutton": { "name": "Push The Button", "keys": [] }
+      }
+    },
+    "7": {
+      "name": "The Jackbox Party Pack 7",
+      "exe": "/opt/jackbox/games/The Jackbox Party Pack 7/The Jackbox Party Pack 7.exe",
+      "menuDelayMs": 20000,
+      "games": {
+        "quiplash3": { "name": "Quiplash 3", "keys": [] },
+        "devilsandthedetails": { "name": "The Devils and the Details", "keys": [] },
+        "champdup": { "name": "Champ'd Up", "keys": [] },
+        "talkingpoints": { "name": "Talking Points", "keys": [] },
+        "blatherround": { "name": "Blather 'Round", "keys": [] }
+      }
+    },
+    "8": {
+      "name": "The Jackbox Party Pack 8",
+      "exe": "/opt/jackbox/games/The Jackbox Party Pack 8/The Jackbox Party Pack 8.exe",
+      "menuDelayMs": 20000,
+      "games": {
+        "drawfulanimate": { "name": "Drawful Animate", "keys": [] },
+        "wheelofenormousproportions": { "name": "The Wheel of Enormous Proportions", "keys": [] },
+        "jobjob": { "name": "Job Job", "keys": [] },
+        "pollmine": { "name": "The Poll Mine", "keys": [] },
+        "weaponsdrawn": { "name": "Weapons Drawn", "keys": [] }
+      }
+    }
+  }
+}

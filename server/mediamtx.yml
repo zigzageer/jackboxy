@@ -1,0 +1,31 @@
+# MediaMTX config for the Jackbox stream. The bot's ffmpeg publishes to
+# rtsp://127.0.0.1:8554/game and browsers watch at http://<server ip>:8889/game.
+logLevel: warn
+
+# Only the bot on this machine may publish; anyone with the link may watch.
+authInternalUsers:
+  - user: any
+    ips: ['127.0.0.1', '::1']
+    permissions:
+      - action: publish
+      - action: read
+      - action: api
+  - user: any
+    ips: []
+    permissions:
+      - action: read
+        path: game
+
+rtspAddress: 127.0.0.1:8554
+rtmp: no
+hls: no
+srt: no
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+# install.sh fills in the server's public IP so browsers can reach the media port.
+webrtcAdditionalHosts: [PUBLIC_IP]
+
+paths:
+  game: {}

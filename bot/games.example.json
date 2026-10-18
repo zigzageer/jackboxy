@@ -1,0 +1,24 @@
+{
+  "packs": {
+    "3": {
+      "name": "The Jackbox Party Pack 3",
+      "exe": "C:/Program Files (x86)/Steam/steamapps/common/The Jackbox Party Pack 3/The Jackbox Party Pack 3.exe",
+      "games": {
+        "quiplash2": { "name": "Quiplash 2" },
+        "triviamurderparty": { "name": "Trivia Murder Party" },
+        "guesspionage": { "name": "Guesspionage" },
+        "fakinit": { "name": "Fakin' It" },
+        "teeko": { "name": "Tee K.O." }
+      }
+    },
+    "standalone": {
+      "name": "Standalone games",
+      "games": {
+        "quiplash3": {
+          "name": "Quiplash 3",
+          "exe": "C:/Program Files (x86)/Steam/steamapps/common/Quiplash 3/Quiplash3.exe"
+        }
+      }
+    }
+  }
+}

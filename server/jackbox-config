@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Asks for the Discord bot details, saves them, registers the slash commands
+# and (re)starts the bot. Run with sudo after install.sh.
+set -euo pipefail
+
+APP_USER=jackbox
+BOT_DIR=/opt/jackbox/repo/bot
+ENV_FILE=$BOT_DIR/.env
+
+if [[ $EUID -ne 0 ]]; then echo "Run this with sudo." >&2; exit 1; fi
+
+echo "Find these at https://discord.com/developers/applications"
+read -rsp "Bot token (hidden): " token </dev/tty; echo
+read -rp "Application ID: " client_id </dev/tty
+read -rp "Server ID to register commands in (recommended, Enter to skip): " guild_id </dev/tty
+
+umask 077
+cat > "$ENV_FILE" <<EOF
+DISCORD_TOKEN=$token
+DISCORD_CLIENT_ID=$client_id
+DISCORD_GUILD_ID=$guild_id
+EOF
+chown $APP_USER:$APP_USER "$ENV_FILE"
+
+sudo -u $APP_USER bash -c "cd $BOT_DIR && node src/register-commands.js"
+systemctl enable jackbox-bot >/dev/null
+systemctl restart jackbox-bot
+sleep 3
+systemctl --no-pager --lines=5 status jackbox-bot || true
+echo
+echo "Bot started. Logs: sudo journalctl -u jackbox-bot -f"
