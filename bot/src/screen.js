@@ -17,14 +17,16 @@ export async function screenshot() {
   const { stdout } = await run('ffmpeg', [
     '-loglevel', 'error', '-f', 'x11grab', '-video_size', process.env.STREAM_SIZE || '1280x720',
     '-i', display(), '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', '-',
-  ], { encoding: 'buffer', maxBuffer: 20 * 1024 * 1024 });
+  ], { encoding: 'buffer', maxBuffer: 20 * 1024 * 1024, timeout: 8_000, killSignal: 'SIGKILL' });
   return stdout;
 }
 
 /** Presses xdotool key names in order, e.g. ["Down", "Down", "Return"]. */
 export async function sendKeys(keys, { delayMs = 400 } = {}) {
   if (!keys?.length) return;
-  await run('xdotool', ['key', '--delay', String(delayMs), ...keys], { env: { ...process.env, DISPLAY: display() } });
+  await run('xdotool', ['key', '--delay', String(delayMs), ...keys], {
+    env: { ...process.env, DISPLAY: display() }, timeout: 8_000, killSignal: 'SIGKILL',
+  });
 }
 
 // Uppercase four-letter words Jackbox screens show that are not room codes.
@@ -50,12 +52,13 @@ export function pickRoomCode(tsv) {
 
 export async function readRoomCodeOnce() {
   const png = await screenshot();
-  const tesseract = execFile('tesseract', ['stdin', 'stdout', 'tsv'], { maxBuffer: 5 * 1024 * 1024 });
+  const tesseract = execFile('tesseract', ['stdin', 'stdout', 'tsv'], { maxBuffer: 5 * 1024 * 1024, timeout: 5_000, killSignal: 'SIGKILL' });
   const out = new Promise((resolve, reject) => {
     let data = '';
     tesseract.stdout.on('data', (d) => { data += d; });
     tesseract.once('error', reject);
-    tesseract.once('close', () => resolve(data));
+    tesseract.stdin.once('error', reject);
+    tesseract.once('close', (code) => code === 0 ? resolve(data) : reject(new Error(`Room-code OCR exited with code ${code}`)));
   });
   tesseract.stdin.end(png);
   return pickRoomCode(await out);
@@ -71,7 +74,10 @@ export async function waitForRoomCode({ timeoutMs = 180_000, intervalMs = 4_000,
     } catch (err) {
       console.error('[screen] room code read failed:', err.message);
     }
-    await new Promise((r) => setTimeout(r, intervalMs));
+    const nextRead = Date.now() + intervalMs;
+    while (Date.now() < nextRead && !isCancelled()) {
+      await new Promise((r) => setTimeout(r, Math.min(200, nextRead - Date.now())));
+    }
   }
   return null;
 }

@@ -18,7 +18,7 @@
       "exe": "/opt/jackbox/games/The Jackbox Party Pack 3/The Jackbox Party Pack 3.exe",
       "menuDelayMs": 20000,
       "games": {
-        "quiplash2": { "name": "Quiplash 2", "keys": [] },
+        "quiplash2": { "name": "Quiplash 2", "aliases": ["quiplash"], "keys": [] },
         "triviamurderparty": { "name": "Trivia Murder Party", "keys": [] },
         "guesspionage": { "name": "Guesspionage", "keys": [] },
         "teeko": { "name": "Tee K.O.", "keys": [] },

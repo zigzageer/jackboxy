@@ -24,6 +24,8 @@ srt: no
 webrtc: yes
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
+# TCP fallback for browsers and viewer networks that cannot use UDP.
+webrtcLocalTCPAddress: :8189
 # install.sh fills in the server's public IP so browsers can reach the media port.
 webrtcAdditionalHosts: [PUBLIC_IP]
 

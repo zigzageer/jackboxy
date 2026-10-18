@@ -15,12 +15,19 @@ read -rp "Application ID: " client_id </dev/tty
 read -rp "Server ID to register commands in (recommended, Enter to skip): " guild_id </dev/tty
 
 umask 077
-cat > "$ENV_FILE" <<EOF
+temporary_env=$(mktemp "$BOT_DIR/.env.XXXXXX")
+trap 'rm -f "$temporary_env"' EXIT
+# Keep non-Discord local settings such as JACKBOX_CONFIG.
+if [[ -f $ENV_FILE ]]; then
+  awk '!/^DISCORD_(TOKEN|CLIENT_ID|GUILD_ID)=/' "$ENV_FILE" > "$temporary_env"
+fi
+cat >> "$temporary_env" <<EOF
+
 DISCORD_TOKEN=$token
 DISCORD_CLIENT_ID=$client_id
 DISCORD_GUILD_ID=$guild_id
 EOF
-chown $APP_USER:$APP_USER "$ENV_FILE"
+install -o $APP_USER -g $APP_USER -m 0600 "$temporary_env" "$ENV_FILE"
 
 sudo -u $APP_USER bash -c "cd $BOT_DIR && node src/register-commands.js"
 systemctl enable jackbox-bot >/dev/null

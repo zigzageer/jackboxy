@@ -1,0 +1,140 @@
+#!/usr/bin/env node
+'use strict';
+
+// Read-only discovery unless --output names a new file. Never launches games.
+const fs = require('node:fs');
+const path = require('node:path');
+
+const localTemplate = path.join(__dirname, 'games.linux.json');
+const templatePath = fs.existsSync(localTemplate)
+  ? localTemplate : '/opt/jackbox/repo/server/games.linux.json';
+const defaultConfig = path.join(path.dirname(templatePath), '..', 'bot', 'games.json');
+const options = { root: '/opt/jackbox/games', config: defaultConfig };
+
+function usage() {
+  console.log(`Usage: jackbox-discover [--root DIRECTORY] [--config GAMES_JSON] [--output NEW_FILE]
+       jackbox-discover DIRECTORY
+
+Recursively finds installed Jackbox pack .exe files, including nested folders
+and paths with spaces. Defaults to /opt/jackbox/games. Only discovered packs with
+game templates are included. Existing config settings, game keys and aliases are
+preserved when possible. Config is read only; output goes to stdout unless
+--output names a file that does not exist. Diagnostics go to stderr.`);
+}
+
+function normalize(value) {
+  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function packNumber(filename) {
+  if (!/\.exe$/i.test(filename)) return null;
+  const match = normalize(path.basename(filename, path.extname(filename)))
+    .match(/^(?:the)?jackboxpartypack(\d*)$/);
+  return match ? String(Number(match[1] || 1)) : null;
+}
+
+function readConfig(filename) {
+  const config = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  if (!config || !config.packs || Array.isArray(config.packs) || typeof config.packs !== 'object') {
+    throw new Error(`${filename}: expected a top-level packs object`);
+  }
+  return config;
+}
+
+function mergeGames(templateGames, existingGames = {}) {
+  const games = { ...existingGames };
+  for (const [key, defaults] of Object.entries(templateGames)) {
+    const identities = [key, defaults.name, ...(defaults.aliases ?? [])].map(normalize);
+    const match = Object.entries(existingGames).find(([oldKey, game]) =>
+      [oldKey, game.name, ...(game.aliases ?? [])].some((name) => identities.includes(normalize(name))));
+    const [savedKey, saved] = match ?? [key, {}];
+    const aliases = [...new Set([
+      ...(defaults.aliases ?? []), ...(saved.aliases ?? []), ...(savedKey !== key ? [key] : []),
+    ])];
+    games[savedKey] = { ...defaults, ...saved, ...(aliases.length ? { aliases } : {}) };
+  }
+  return games;
+}
+
+function discover() {
+  const args = process.argv.slice(2);
+  let rootGiven = false;
+  let configGiven = false;
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === '--help' || arg === '-h') { usage(); return; }
+    if (['--root', '--config', '--output'].includes(arg)) {
+      if (!args[index + 1] || args[index + 1].startsWith('--')) throw new Error(`${arg} needs a value`);
+      const name = arg.slice(2);
+      options[name] = args[++index];
+      if (name === 'root') rootGiven = true;
+      if (name === 'config') configGiven = true;
+    } else if (!arg.startsWith('-') && !rootGiven) {
+      options.root = arg;
+      rootGiven = true;
+    } else {
+      throw new Error(`Unknown argument: ${arg}. Use --help for usage.`);
+    }
+  }
+
+  const root = path.resolve(options.root);
+  if (!fs.statSync(root).isDirectory()) throw new Error(`${root}: expected a directory`);
+  const template = readConfig(templatePath);
+  if (configGiven && !fs.existsSync(options.config)) throw new Error(`Config does not exist: ${options.config}`);
+  const existing = fs.existsSync(options.config) ? readConfig(options.config) : {};
+  const candidates = new Map();
+  const pending = [root];
+  while (pending.length) {
+    const directory = pending.pop();
+    // Fail on unreadable folders rather than generating an incomplete config silently.
+    const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const filename = path.join(directory, entry.name);
+      if (entry.isDirectory()) { pending.push(filename); continue; }
+      // Do not follow directory symlinks, which could escape the requested tree.
+      if (!entry.isFile() && !(entry.isSymbolicLink() && fs.statSync(filename).isFile())) continue;
+      const number = packNumber(entry.name);
+      if (!number) continue;
+      if (!template.packs[number]) {
+        console.error(`Skipping pack ${number}: no game template in ${templatePath}.`);
+        continue;
+      }
+      const found = candidates.get(number) ?? [];
+      found.push(filename);
+      candidates.set(number, found);
+    }
+  }
+
+  const packs = {};
+  for (const [number, files] of [...candidates].sort(([a], [b]) => Number(a) - Number(b))) {
+    const defaults = template.packs[number];
+    const match = Object.entries(existing.packs ?? {}).find(([key, pack]) =>
+      key === number || normalize(pack.name) === normalize(defaults.name)
+        || packNumber(path.basename(pack.exe ?? '')) === number);
+    const [key, saved] = match ?? [number, {}];
+    const savedExe = saved.exe && path.resolve(saved.exe);
+    const exe = files.find((file) => file === savedExe) ?? (files.length === 1 ? files[0] : null);
+    if (!exe) {
+      throw new Error(`Multiple executables for pack ${number}; choose a narrower --root or set its existing exe:\n${files.join('\n')}`);
+    }
+    packs[key] = { ...defaults, ...saved, exe, games: mergeGames(defaults.games, saved.games) };
+    console.error(`Pack ${number}: ${exe}`);
+  }
+
+  const result = `${JSON.stringify({ ...template, ...existing, packs }, null, 2)}\n`;
+  if (options.output) {
+    fs.writeFileSync(path.resolve(options.output), result, { flag: 'wx', mode: 0o644 });
+    console.error(`Wrote ${options.output}; existing files were not changed.`);
+  } else {
+    process.stdout.write(result);
+  }
+  console.error(`Found ${Object.keys(packs).length} supported installed pack(s).`);
+  if (root.startsWith('/home/')) {
+    console.error('The jackbox service needs access to every parent directory and all game assets. Prefer copying complete pack folders to /opt/jackbox/games; home directories may be private.');
+  }
+}
+
+try { discover(); } catch (error) {
+  console.error(`jackbox-discover: ${error.message}`);
+  process.exitCode = 1;
+}

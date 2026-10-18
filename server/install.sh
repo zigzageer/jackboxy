@@ -32,16 +32,19 @@ dpkg --add-architecture i386
 apt-get update -q
 apt-get install -y -q ca-certificates curl git xvfb openbox xdotool pulseaudio ffmpeg \
   tesseract-ocr fonts-dejavu-core wine wine64 wine32:i386 winbind
-node_major() { command -v node >/dev/null && node -p 'process.versions.node.split(".")[0]' || echo 0; }
-if [[ $(node_major) -lt 22 ]]; then
-  log "Installing Node.js 22"
+node_supported() {
+  command -v node >/dev/null && node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)'
+}
+if ! node_supported; then
+  log "Installing Node.js 22.12 or newer"
   # Newer Ubuntu releases ship Node 22+ themselves; older ones need NodeSource.
   apt-get install -y -q nodejs npm || true
-  if [[ $(node_major) -lt 22 ]]; then
+  if ! node_supported; then
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
     apt-get install -y -q nodejs
   fi
 fi
+node_supported || { echo "Node.js 22.12 or newer is required." >&2; exit 1; }
 # Ubuntu's own nodejs package leaves npm out (NodeSource's includes it).
 command -v npm >/dev/null || apt-get install -y -q npm
 
@@ -62,16 +65,34 @@ else
   sudo -u $APP_USER git clone -q --branch "$BRANCH" --single-branch "$REPO_URL" $REPO_DIR
 fi
 sudo -u $APP_USER bash -c "cd $BOT_DIR && npm ci --omit=dev --no-audit --no-fund"
-[[ -f $BOT_DIR/games.json ]] || sudo -u $APP_USER cp $REPO_DIR/server/games.linux.json $BOT_DIR/games.json
 install -m 0755 $REPO_DIR/server/jackbox-config /usr/local/bin/jackbox-config
 install -m 0755 $REPO_DIR/server/jackbox-steam /usr/local/bin/jackbox-steam
+install -m 0755 $REPO_DIR/server/jackbox-discover /usr/local/bin/jackbox-discover
+if [[ ! -e $BOT_DIR/games.json ]]; then
+  sudo -u $APP_USER /usr/local/bin/jackbox-discover --root "$GAMES_DIR" --output "$BOT_DIR/games.json"
+fi
 
 log "Installing MediaMTX $MEDIAMTX_VERSION"
 if ! /usr/local/bin/mediamtx --version 2>/dev/null | grep -q "$MEDIAMTX_VERSION"; then
   tmp=$(mktemp -d)
-  curl -fsSL "https://github.com/bluenviron/mediamtx/releases/download/$MEDIAMTX_VERSION/mediamtx_${MEDIAMTX_VERSION}_linux_amd64.tar.gz" | tar -xz -C "$tmp" mediamtx
+  trap 'rm -rf -- "$tmp"' EXIT
+  archive="mediamtx_${MEDIAMTX_VERSION}_linux_amd64.tar.gz"
+  release_url="https://github.com/bluenviron/mediamtx/releases/download/$MEDIAMTX_VERSION"
+  curl -fsSL "$release_url/$archive" -o "$tmp/$archive"
+  curl -fsSL "$release_url/checksums.sha256" -o "$tmp/checksums.sha256"
+  (
+    cd "$tmp"
+    # Verify exactly this release archive before extracting or installing it.
+    awk -v artifact="$archive" '
+      $2 == artifact || $2 == "*" artifact {print; found++}
+      END {if (found != 1) {print "Expected exactly one checksum for " artifact > "/dev/stderr"; exit 1}}
+    ' checksums.sha256 > archive.sha256
+    sha256sum --strict --check archive.sha256
+  )
+  tar -xzf "$tmp/$archive" -C "$tmp" mediamtx
   install -m 0755 "$tmp/mediamtx" /usr/local/bin/mediamtx
-  rm -rf "$tmp"
+  rm -rf -- "$tmp"
+  trap - EXIT
 fi
 # Small servers (2 cores) share the CPU between the game and the encoder, so stream fewer frames.
 if [[ $(nproc) -le 2 ]]; then STREAM_FPS=24; STREAM_BITRATE=1800k; else STREAM_FPS=30; STREAM_BITRATE=2500k; fi
@@ -156,6 +177,9 @@ After=jackbox-wm.service jackbox-audio.service jackbox-stream.service network-on
 User=$APP_USER
 $common_env
 Environment=STREAM_PUBLIC_URL=http://$PUBLIC_IP:8889/game
+Environment=CONTROL_PUBLIC_URL=http://$PUBLIC_IP:3000
+Environment=CONTROL_HOST=0.0.0.0
+Environment=CONTROL_PORT=3000
 Environment=STREAM_SIZE=$SCREEN_SIZE
 Environment=STREAM_FPS=$STREAM_FPS
 Environment=STREAM_BITRATE=$STREAM_BITRATE
@@ -175,17 +199,25 @@ if [[ -f $BOT_DIR/.env ]]; then
 fi
 
 if command -v ufw >/dev/null && ufw status | grep -q 'Status: active'; then
-  log "Opening stream ports in the firewall"
+  log "Opening browser control and stream ports in the firewall"
+  ufw allow 3000/tcp
   ufw allow 8889/tcp
   ufw allow 8189/udp
+  ufw allow 8189/tcp
 fi
 
 cat <<EOF
 
 Done. Next steps:
   1. Run:  sudo jackbox-steam
-     to download your Jackbox packs from your Steam account.
-  2. Run:  sudo jackbox-config
+     to download your Jackbox packs, or copy complete pack folders into $GAMES_DIR.
+  2. Discover actual installed paths into a NEW file:
+       sudo -u $APP_USER jackbox-discover --output /tmp/jackbox-games.discovered.json
+     Review that file, then explicitly install it as $BOT_DIR/games.json.
+     Existing game settings are preserved; packs that were not found are omitted.
+  3. Run:  sudo jackbox-config
      to enter your Discord bot token and start the bot.
-  The stream will be at http://$PUBLIC_IP:8889/game while a game runs.
+  /jackbox posts the public stream and a private browser control link.
+  Allow TCP 3000, TCP 8889, UDP 8189 and TCP 8189 in your provider's firewall too.
+  Use HTTPS for public access; private control links act as bearer credentials.
 EOF

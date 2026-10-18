@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const BOT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export const MENU_KEYS = new Set(['Up', 'Down', 'Left', 'Right', 'Return', 'Escape', 'space', 'Tab']);
 
 export function configPath() {
   return process.env.JACKBOX_CONFIG
@@ -39,6 +40,16 @@ export function loadConfig(file = configPath()) {
       if (!game.exe && !pack.exe) {
         throw new Error(`${file}: "${packKey}/${gameKey}" has no exe and its pack has none either`);
       }
+      if (game.aliases !== undefined && (!Array.isArray(game.aliases) || game.aliases.some((a) => typeof a !== 'string' || !normalize(a)))) {
+        throw new Error(`${file}: "${packKey}/${gameKey}" aliases must be non-empty names`);
+      }
+      if (game.keys !== undefined && (!Array.isArray(game.keys) || game.keys.some((key) => !MENU_KEYS.has(key)))) {
+        throw new Error(`${file}: "${packKey}/${gameKey}" contains an unsupported menu key`);
+      }
+      if (game.menuSteps !== undefined && (!Array.isArray(game.menuSteps) || game.menuSteps.length > 60 ||
+        game.menuSteps.some((step) => !step || !MENU_KEYS.has(step.key) || !Number.isInteger(step.delayMs) || step.delayMs < 0 || step.delayMs > 300_000))) {
+        throw new Error(`${file}: "${packKey}/${gameKey}" has invalid menuSteps`);
+      }
     }
   }
   return raw;
@@ -58,7 +69,7 @@ export function resolveGame(config, packQuery, gameQuery) {
   if (!pack) return null;
   const q = normalize(gameQuery);
   for (const [key, game] of Object.entries(pack.games)) {
-    if (normalize(key) === q || normalize(game.name ?? '') === q) {
+    if (normalize(key) === q || normalize(game.name ?? '') === q || game.aliases?.some((alias) => normalize(alias) === q)) {
       return {
         pack: { key: pack.key, name: pack.name ?? pack.key },
         game: { key, name: game.name ?? key },
@@ -67,6 +78,7 @@ export function resolveGame(config, packQuery, gameQuery) {
         runner: config.runner ?? [],
         // xdotool key names pressed after launch to pick the game in the pack's menu.
         keys: game.keys ?? [],
+        menuSteps: game.menuSteps,
         menuDelayMs: game.menuDelayMs ?? pack.menuDelayMs ?? 20_000,
         // True when the pack's shared exe is launched, so players still pick the game in its menu.
         viaPackMenu: !game.exe,
@@ -89,7 +101,7 @@ export function gameChoices(config, packQuery, typed) {
 function choices(entries, typed) {
   const q = normalize(typed ?? '');
   return entries
-    .filter(([key, item]) => normalize(key).includes(q) || normalize(item.name ?? '').includes(q))
+    .filter(([key, item]) => normalize(key).includes(q) || normalize(item.name ?? '').includes(q) || item.aliases?.some((alias) => normalize(alias).includes(q)))
     .slice(0, 25)
     .map(([key, item]) => ({ name: item.name ? `${item.name} (${key})` : key, value: key }));
 }

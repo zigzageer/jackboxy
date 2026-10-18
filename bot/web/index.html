@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="referrer" content="no-referrer">
+    <title>Jackbox · Game room</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Jackbox game room"><span class="brand-mark" aria-hidden="true">J</span> JACKBOX<span class="brand-sub">GAME ROOM</span></a>
+        <span class="connection" id="connection" role="status"><span class="status-dot"></span><span id="connection-label">Connecting</span></span>
+      </header>
+
+      <main>
+        <section class="intro" aria-labelledby="game-title">
+          <div><p class="eyebrow" id="pack-name">YOUR NEXT GREAT GAME NIGHT</p><h1 id="game-title">Make room for some fun.</h1><p class="subtitle" id="game-description">The party starts when your host launches a game in Discord.</p></div>
+          <div class="role" id="role">WATCHING TOGETHER</div>
+        </section>
+
+        <div class="room-layout">
+          <section class="watch-panel" aria-label="Game stream">
+            <div class="player-wrap">
+              <div class="player-placeholder" id="player-placeholder"><div class="play-symbol" aria-hidden="true">▶</div><h2 id="player-heading">Your party's on its way.</h2><p id="player-message">The game stream will appear here.</p></div>
+              <iframe id="player" title="Live Jackbox game video and audio" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer" hidden></iframe>
+            </div>
+            <div class="player-footer"><p id="playback-note">Waiting for a game.</p><div class="player-actions"><button id="reconnect" class="text-button" type="button" disabled>↻ Reconnect</button><a id="open-stream" class="text-button" target="_blank" rel="noopener noreferrer" hidden>Open player ↗</a></div></div>
+          </section>
+
+          <aside class="join-panel" aria-labelledby="join-title">
+            <span class="step">YOUR PHONE IS YOUR CONTROLLER</span><h2 id="join-title">Get in on it.</h2><p>Open Jackbox on your phone and enter the room code shown in the game.</p>
+            <div class="room-code-box"><span>ROOM CODE</span><strong id="room-code">— — — —</strong><p id="room-code-note">Waiting for the lobby</p></div>
+            <a href="https://jackbox.tv" target="_blank" rel="noopener noreferrer" class="join-button">Join at jackbox.tv <span aria-hidden="true">↗</span></a>
+            <p class="join-tip">Keep this screen open to watch and hear the game. Play along on your phone.</p>
+          </aside>
+        </div>
+
+        <section class="host-panel" id="host-panel" aria-labelledby="host-title" hidden>
+          <div class="host-heading"><div><p class="eyebrow">YOU'RE THE HOST</p><h2 id="host-title">Steer the party.</h2><p>First launch: use the buttons to reach this game's lobby, then save the steps. Future launches repeat them.</p></div><button id="keyboard-toggle" class="secondary-button" type="button" aria-pressed="false">Enable keyboard</button></div>
+          <div class="host-controls">
+            <div class="dpad" aria-label="Directional controls"><button type="button" data-key="Up" class="up" aria-label="Up">↑</button><button type="button" data-key="Left" class="left" aria-label="Left">←</button><button type="button" data-key="Down" class="down" aria-label="Down">↓</button><button type="button" data-key="Right" class="right" aria-label="Right">→</button></div>
+            <div class="menu-controls"><button type="button" data-key="Return" class="primary-button">Select <kbd>Enter</kbd></button><button type="button" data-key="Escape" class="secondary-button">Back <kbd>Esc</kbd></button><button type="button" data-key="space" class="secondary-button">Space</button><button type="button" data-key="Tab" class="secondary-button">Tab</button><button id="save-menu" type="button" class="secondary-button">Save menu steps</button></div>
+            <button id="stop-game" class="danger-button" type="button">End game</button>
+          </div>
+          <p id="control-message" class="control-message" role="status">Your host controls are ready. Keep your private control link to yourself.</p>
+        </section>
+        <p id="page-message" class="page-message" role="status" hidden></p>
+      </main>
+      <footer class="page-footer">GOOD COMPANY. QUESTIONABLE ANSWERS. GREAT NIGHTS.</footer>
+    </div>
+  </body>
+</html>

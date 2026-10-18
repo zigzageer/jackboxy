@@ -42,3 +42,6 @@ done
 
 echo
 echo "Done. Installed packs are in $GAMES_DIR."
+echo "Generate a config using the files actually installed (choose an unused output path):"
+echo "  sudo -u $APP_USER jackbox-discover --output /tmp/jackbox-games.discovered.json"
+echo "Review it before installing it as /opt/jackbox/repo/bot/games.json."
