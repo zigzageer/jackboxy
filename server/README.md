@@ -51,6 +51,25 @@ Then:
 Never use a Discord user account token. Keep bot and Steam credentials out of
 chat, repository files, logs and shell command arguments.
 
+## Test in a browser without Discord
+
+With the installer and game configuration already in place, run this in your
+SSH terminal. It uses the existing files and services; no Discord token is needed:
+
+```bash
+sudo env PUBLIC_IP=YOUR_SERVER_IP bash /opt/jackbox/repo/server/jackbox-web-test 3 quiplash
+```
+
+Open the printed **Watch** URL or the **Private host** URL, which includes menu
+controls. Keep the private link private. The pack's opening menu appears first;
+select the game manually with the host controls. Saved menu steps are skipped
+for this test; optionally save a new route once you reach the game's lobby.
+Ctrl+C stops the test's game, capture and web server. The Discord bot is stopped
+before the test and stays stopped afterward; the screen, audio and stream
+services stay running. The host page's Stop button stops the game and capture;
+press Ctrl+C to exit the helper. The same firewall ports listed below apply.
+`CONTROL_PUBLIC_URL` and `STREAM_PUBLIC_URL` can override the generated URLs.
+
 ## Existing game files and discovery
 
 `jackbox-discover` searches recursively for actual Jackbox pack `.exe` files;

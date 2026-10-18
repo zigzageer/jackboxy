@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Foreground browser test using the existing installation, without Discord.
+set -euo pipefail
+die() { echo "jackbox-web-test: $*" >&2; exit 1; }
+[[ $(id -u) == 0 ]] || die 'Run with sudo.'
+[[ -t 1 ]] || die 'Run in an interactive terminal so the private host URL stays out of logs.'
+[[ -n ${PUBLIC_IP:-}${CONTROL_PUBLIC_URL:-} ]] || die 'Set PUBLIC_IP or CONTROL_PUBLIC_URL.'
+[[ $# -le 2 ]] || die 'Usage: jackbox-web-test [pack=3] [game=quiplash]'
+bot_dir=${JACKBOX_BOT_DIR:-/opt/jackbox/repo/bot}
+[[ -f "$bot_dir/src/game-manager.js" && -f "$bot_dir/src/control-server.js" ]] || die "Existing bot modules missing from $bot_dir."
+cd -- "$bot_dir"
+systemctl stop jackbox-bot
+systemctl start jackbox-screen jackbox-wm jackbox-audio jackbox-stream
+echo 'Starting browser test. The Discord bot stays stopped after this test.'
+exec sudo -u jackbox env \
+  HOME=/opt/jackbox/home DISPLAY=:99 XDG_RUNTIME_DIR=/run/jackbox \
+  WINEPREFIX=/opt/jackbox/wine WINEDEBUG=-all \
+  PUBLIC_IP="${PUBLIC_IP:-}" CONTROL_PUBLIC_URL="${CONTROL_PUBLIC_URL:-}" \
+  CONTROL_HOST="${CONTROL_HOST:-0.0.0.0}" CONTROL_PORT="${CONTROL_PORT:-3000}" \
+  STREAM_PUBLIC_URL="${STREAM_PUBLIC_URL:-}" STREAM_FPS="${STREAM_FPS:-24}" \
+  STREAM_BITRATE="${STREAM_BITRATE:-1800k}" STREAM_SIZE="${STREAM_SIZE:-1280x720}" \
+  STREAM_CODEC="${STREAM_CODEC:-}" STREAM_AUDIO_SOURCE="${STREAM_AUDIO_SOURCE:-game.monitor}" \
+  STREAM_PUBLISH_URL="${STREAM_PUBLISH_URL:-rtsp://127.0.0.1:8554/game}" \
+  JACKBOX_CONFIG="${JACKBOX_CONFIG:-$bot_dir/games.json}" \
+  node --input-type=module - "${1:-3}" "${2:-quiplash}" <<'NODE'
+import { loadConfig, resolveGame } from './src/config.js';
+import { games } from './src/game-manager.js';
+import { createControlServer } from './src/control-server.js';
+
+let server;
+let closing = false;
+async function shutdown(code) {
+  if (closing) return;
+  closing = true;
+  const deadline = setTimeout(() => {
+    console.error('[web-test] Cleanup timed out; inspect game processes before retrying.');
+    process.exit(1);
+  }, 20_000);
+  deadline.unref();
+  server?.close();
+  server?.closeAllConnections();
+  try { await games.stop(); }
+  catch (error) { console.error('[web-test]', error.message); code = 1; }
+  clearTimeout(deadline);
+  process.exit(code);
+}
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { void shutdown(0); });
+
+try {
+  const env = process.env;
+  const port = Number(env.CONTROL_PORT || 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('CONTROL_PORT must be between 1 and 65535.');
+  env.CONTROL_PUBLIC_URL ||= `http://${env.PUBLIC_IP}:${port}`;
+  const stream = new URL(env.CONTROL_PUBLIC_URL);
+  stream.protocol = 'http:';
+  if (env.PUBLIC_IP) stream.hostname = env.PUBLIC_IP;
+  stream.port = '8889';
+  stream.pathname = '/game';
+  stream.search = '';
+  stream.hash = '';
+  env.STREAM_PUBLIC_URL ||= stream.href;
+  const [pack = '3', game = 'quiplash'] = process.argv.slice(2);
+  const resolved = resolveGame(loadConfig(), pack, game);
+  if (!resolved) throw new Error('Pack/game not found in the existing games configuration.');
+  server = createControlServer({
+    getSession: games.current, pressKey: games.pressKey,
+    stopGame: games.stop, saveMenu: games.saveMenu,
+  });
+  // Reserve the port before launching a game or starting capture.
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, env.CONTROL_HOST || '0.0.0.0', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  server.on('error', (error) => { console.error('[web-test]', error.message); void shutdown(1); });
+  if (!closing) {
+    const session = await games.start(resolved);
+    if (!closing) {
+      const watch = new URL(env.CONTROL_PUBLIC_URL);
+      const host = new URL(watch);
+      host.hash = `control=${session.token}`;
+      console.log(`Watch: ${watch.href}\nPrivate host (keep private): ${host.href}`);
+      console.log('The pack opening menu appears first. Use host controls to select the game; saved steps are not replayed.');
+      console.log('At the game lobby, Save menu steps optionally records this route. Ctrl+C stops the game, capture and web server.');
+    }
+  }
+} catch (error) {
+  console.error('[web-test]', error.message);
+  await shutdown(1);
+}
+NODE
