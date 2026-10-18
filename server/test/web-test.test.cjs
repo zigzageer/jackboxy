@@ -45,6 +45,9 @@ function shellFixture(t) {
   delete env.STREAM_PUBLIC_URL;
   delete env.STREAM_FPS;
   delete env.STREAM_BITRATE;
+  delete env.WINEDEBUG;
+  delete env.LIBGL_ALWAYS_SOFTWARE;
+  delete env.LIBGL_DEBUG;
   return { dir, log, env, calls: () => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [] };
 }
 
@@ -77,20 +80,28 @@ test('foreground shell wires the installed services and jackbox environment with
   assert.equal(env.CONTROL_PORT, '3000');
   assert.equal(env.STREAM_FPS, '24');
   assert.equal(env.STREAM_BITRATE, '1800k');
+  assert.equal(env.LIBGL_ALWAYS_SOFTWARE, '0');
+  assert.equal(env.LIBGL_DEBUG, '');
   assert.equal(env.JACKBOX_CONFIG, path.join(f.dir, 'games.json'));
   assert.deepEqual(run.args.slice(node), ['node', '--input-type=module', '-', '3', 'quiplash']);
   assert.equal(run.input, inline + '\n');
   assert.doesNotMatch(run.input, /discord\.js|dotenv|src\/index\.js|games\.navigate\(/i);
 });
 
-test('shell preserves stream overrides and passes game text as a literal argument', (t) => {
+test('shell forwards explicit stream and graphics diagnostics and passes game text literally', (t) => {
   const f = shellFixture(t);
   const game = 'quiplash; touch SHOULD_NOT_EXIST';
-  const result = shellRun(f, ['3', game], { ...f.env, STREAM_FPS: '30', STREAM_BITRATE: '2500k' });
+  const result = shellRun(f, ['3', game], {
+    ...f.env, STREAM_FPS: '30', STREAM_BITRATE: '2500k',
+    WINEDEBUG: '-all,err+all', LIBGL_ALWAYS_SOFTWARE: '1', LIBGL_DEBUG: 'verbose',
+  });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   const args = f.calls()[2].args;
   assert.ok(args.includes('STREAM_FPS=30'));
   assert.ok(args.includes('STREAM_BITRATE=2500k'));
+  assert.ok(args.includes('WINEDEBUG=-all,err+all'));
+  assert.ok(args.includes('LIBGL_ALWAYS_SOFTWARE=1'));
+  assert.ok(args.includes('LIBGL_DEBUG=verbose'));
   assert.equal(args.at(-1), game);
   assert.equal(fs.existsSync(path.join(f.dir, 'SHOULD_NOT_EXIST')), false);
 });

@@ -14,7 +14,8 @@ systemctl start jackbox-screen jackbox-wm jackbox-audio jackbox-stream
 echo 'Starting browser test. The Discord bot stays stopped after this test.'
 exec sudo -u jackbox env \
   HOME=/opt/jackbox/home DISPLAY=:99 XDG_RUNTIME_DIR=/run/jackbox \
-  WINEPREFIX=/opt/jackbox/wine WINEDEBUG=-all \
+  WINEPREFIX=/opt/jackbox/wine WINEDEBUG="${WINEDEBUG:--all}" \
+  LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-0}" LIBGL_DEBUG="${LIBGL_DEBUG:-}" \
   PUBLIC_IP="${PUBLIC_IP:-}" CONTROL_PUBLIC_URL="${CONTROL_PUBLIC_URL:-}" \
   CONTROL_HOST="${CONTROL_HOST:-0.0.0.0}" CONTROL_PORT="${CONTROL_PORT:-3000}" \
   STREAM_PUBLIC_URL="${STREAM_PUBLIC_URL:-}" STREAM_FPS="${STREAM_FPS:-24}" \

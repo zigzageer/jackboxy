@@ -70,6 +70,17 @@ services stay running. The host page's Stop button stops the game and capture;
 press Ctrl+C to exit the helper. The same firewall ports listed below apply.
 `CONTROL_PUBLIC_URL` and `STREAM_PUBLIC_URL` can override the generated URLs.
 
+If the game window stays black, press Ctrl+C and retry with Wine errors enabled
+and software rendering for diagnosis:
+
+```bash
+sudo env PUBLIC_IP=YOUR_SERVER_IP WINEDEBUG='-all,err+all' LIBGL_ALWAYS_SOFTWARE=1 bash /opt/jackbox/repo/server/jackbox-web-test 3 quiplash
+```
+
+This does not establish the cause or guarantee a fix. `LIBGL_DEBUG=verbose` adds
+OpenGL loader diagnostics if needed. These settings apply only to that run.
+Keep the private host link out of any diagnostic output you share.
+
 ## Existing game files and discovery
 
 `jackbox-discover` searches recursively for actual Jackbox pack `.exe` files;

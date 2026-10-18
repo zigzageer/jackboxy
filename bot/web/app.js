@@ -45,8 +45,8 @@ function frameAddress(url) {
   if (!['http:', 'https:'].includes(address.protocol)) throw new Error('Unsupported stream address.');
   if (!address.pathname.endsWith('/')) address.pathname += '/';
   address.searchParams.set('controls', 'true');
-  address.searchParams.set('autoplay', 'false');
-  address.searchParams.set('muted', 'false');
+  address.searchParams.set('autoplay', 'true');
+  address.searchParams.set('muted', 'true');
   address.searchParams.set('playsinline', 'true');
   return address.href;
 }
@@ -73,7 +73,7 @@ function showStream(status, force = false) {
   element('player-placeholder').hidden = Boolean(address);
   element('player-heading').textContent = status.active ? 'Waiting for the big screen.' : "Your party's on its way.";
   element('player-message').textContent = message;
-  element('playback-note').textContent = address ? 'Press play in the player to enable video and sound.' : status.active ? 'Stream unavailable in this page.' : 'Waiting for a game.';
+  element('playback-note').textContent = address ? 'Video starts muted. Unmute in the player for sound.' : status.active ? 'Stream unavailable in this page.' : 'Waiting for a game.';
   if (address !== playerAddress || force) {
     playerAddress = address;
     if (address) player.src = address;
