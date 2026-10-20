@@ -5,6 +5,9 @@ A Discord bot that hosts one shared Jackbox game on a Linux VPS.
 browser stream with video and audio, and privately gives the caller a browser
 control link. No Discord voice channel is required.
 
+Use `/vc join channel:...` to select a server voice channel or paste its ID.
+The bot joins self-muted and self-deafened; `/vc leave` disconnects it.
+
 The host uses arrow, Enter and Back buttons to navigate the game menu. Everyone
 plays and submits answers on [jackbox.tv](https://jackbox.tv) with the room code.
 Use **Save menu steps** after reaching the lobby to automate that selection on

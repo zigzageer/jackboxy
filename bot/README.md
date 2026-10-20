@@ -3,7 +3,8 @@
 `/jackbox pack:3 game:quiplash` starts Quiplash 2 on the host, posts a public
 watch link, and sends the caller a private browser control link. Players watch
 the video and game audio in their browsers, then join and answer on
-[jackbox.tv](https://jackbox.tv). The bot does not join Discord voice channels.
+[jackbox.tv](https://jackbox.tv). Jackbox streaming does not require a voice connection.
+The separate `/vc join` and `/vc leave` commands manage an optional voice connection.
 One game, screen and stream are shared by everyone using this bot instance.
 
 On the [Linux VPS setup](../server/README.md), Wine runs the games on Xvfb and
@@ -21,7 +22,9 @@ control and capture features require the Linux VPS tools described above.
    self-bots are unsupported. Keep the token in `.env`; never post it in chat.
 2. Invite it with the `bot` and `applications.commands` scopes. Give it
    **View Channels**, **Send Messages** and **Attach Files** in the intended
-   channel. Voice permissions are unnecessary.
+   channel. For `/vc join`, also grant **View Channel** and **Connect** in each
+   target voice channel. Speak, Mute Members and Deafen Members are unnecessary:
+   the bot joins self-muted and self-deafened.
 3. From `bot/`:
 
    ```bash
@@ -78,6 +81,8 @@ keys mean the host must choose the game; no menu indexes are guessed.
 
 | Command | What it does |
 | --- | --- |
+| `/vc join channel:...` | Opens Discord's server voice-channel picker; accepts a channel ID and joins self-muted and self-deafened. |
+| `/vc leave` | Leaves the bot's voice channel in the current server. |
 | `/jackbox pack:3 game:quiplash` | Launches the shared game; both options autocomplete. |
 | `/jackbox pack:3 game:quiplash calibrate:true` | Opens the pack without replaying saved steps so you can record a replacement. |
 | `/jackbox-stop` | Closes the current game and stream. |
@@ -88,6 +93,12 @@ keys mean the host must choose the game; no menu indexes are guessed.
 `/jackbox-key` and `/jackbox-stop` require the user who launched the current game
 or a member with **Manage Server** permission. The private browser link can be
 shared with another trusted host without granting that Discord permission.
+
+`/vc` commands work independently of the running game, including in another
+server. A new join moves the bot's existing voice connection in that server.
+The caller does not need to be in voice. No game audio or video is sent to
+Discord through this connection. Re-run `npm run register` after updating to
+make the new command available, then restart the bot.
 
 The bot also tries to post the room code after launch. OCR may fail on some
 screens; use the browser stream to read it directly.

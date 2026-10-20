@@ -1,9 +1,25 @@
-import { SlashCommandBuilder, MessageFlags, AttachmentBuilder, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, MessageFlags, AttachmentBuilder, PermissionFlagsBits, ChannelType } from 'discord.js';
 import { loadConfig, resolveGame, packChoices, gameChoices, MENU_KEYS } from './config.js';
 import { games } from './game-manager.js';
+import { voice } from './voice.js';
 import { screenAvailable, screenshot, readRoomCodeOnce, waitForRoomCode } from './screen.js';
 
 export const definitions = [
+  new SlashCommandBuilder()
+    .setName('vc')
+    .setDescription('Join or leave a voice channel while muted and deafened')
+    .setDMPermission(false)
+    .addSubcommand((subcommand) => subcommand
+      .setName('join')
+      .setDescription('Join the selected voice channel, self-muted and self-deafened')
+      .addChannelOption((option) => option
+        .setName('channel')
+        .setDescription('Voice channel to join; choose a channel or paste its ID')
+        .addChannelTypes(ChannelType.GuildVoice)
+        .setRequired(true)))
+    .addSubcommand((subcommand) => subcommand
+      .setName('leave')
+      .setDescription('Leave my current voice channel in this server')),
   new SlashCommandBuilder()
     .setName('jackbox')
     .setDescription('Launch a Jackbox game and share its stream and browser controls')
@@ -51,6 +67,7 @@ export async function handleAutocomplete(interaction) {
 
 export async function handleCommand(interaction) {
   if (!interaction.guildId) return interaction.reply({ content: 'Use these commands in a server.', flags: MessageFlags.Ephemeral });
+  if (interaction.commandName === 'vc') return handleVoiceCommand(interaction);
   const current = games.current();
   if (current && current.guildId !== interaction.guildId) {
     return interaction.reply({ content: 'The game host is being used by another server. Try again later.', flags: MessageFlags.Ephemeral });
@@ -64,6 +81,40 @@ export async function handleCommand(interaction) {
   if (interaction.commandName === 'jackbox-key') return jackboxKey(interaction);
   if (interaction.commandName === 'jackbox-screen') return jackboxScreen(interaction);
   if (interaction.commandName === 'jackbox-code') return jackboxCode(interaction);
+}
+
+async function handleVoiceCommand(interaction) {
+  const action = interaction.options.getSubcommand();
+  if (action === 'join') {
+    let channel = interaction.options.getChannel('channel', true);
+    const guildId = channel?.guildId ?? channel?.guild?.id;
+    if (!channel || channel.type !== ChannelType.GuildVoice || (guildId && guildId !== interaction.guildId)) {
+      return interaction.reply({ content: 'Choose a voice channel in this server.', flags: MessageFlags.Ephemeral });
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      // Discord may resolve an uncached channel to a partial object. Fetch its
+      // guild channel before checking permissions and connecting to voice.
+      if (!channel.guild) channel = await interaction.guild.channels.fetch(channel.id);
+      if (!channel || channel.type !== ChannelType.GuildVoice || (channel.guildId ?? channel.guild?.id) !== interaction.guildId) {
+        return interaction.editReply('Choose a voice channel in this server.');
+      }
+      await voice.join(channel);
+      return interaction.editReply(`Joined <#${channel.id}>, self-muted and self-deafened.`);
+    } catch (error) {
+      return interaction.editReply(error.message);
+    }
+  }
+  if (action === 'leave') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try {
+      const left = await voice.leave(interaction.guildId);
+      return interaction.editReply(left ? 'Left the voice channel.' : 'I am not in a voice channel in this server.');
+    } catch (error) {
+      return interaction.editReply(error.message);
+    }
+  }
+  return interaction.reply({ content: 'Use /vc join or /vc leave.', flags: MessageFlags.Ephemeral });
 }
 
 async function jackbox(interaction) {

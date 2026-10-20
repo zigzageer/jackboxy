@@ -46,7 +46,9 @@ Then:
    application ID and optional server ID. The helper registers the slash
    commands and starts the bot when you invoke it. It preserves other `.env`
    settings. Invite the application with `bot` and `applications.commands`, plus
-   View Channels, Send Messages and Attach Files. No voice permissions are needed.
+   View Channels, Send Messages and Attach Files. To use `/vc join`, also allow
+   **Connect** in the target voice channels. The bot joins self-muted and
+   self-deafened; `/vc leave` disconnects it. These commands do not affect the game stream.
 
 Never use a Discord user account token. Keep bot and Steam credentials out of
 chat, repository files, logs and shell command arguments.

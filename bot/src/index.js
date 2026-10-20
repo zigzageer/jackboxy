@@ -3,6 +3,7 @@ import { Client, Events, GatewayIntentBits } from 'discord.js';
 import { handleAutocomplete, handleCommand } from './commands.js';
 import { loadConfig, configPath } from './config.js';
 import { games } from './game-manager.js';
+import { voice } from './voice.js';
 import { createControlServer } from './control-server.js';
 
 if (!process.env.DISCORD_TOKEN) {
@@ -15,7 +16,7 @@ const cfg = loadConfig();
 console.log(`Loaded ${Object.keys(cfg.packs).length} pack(s) from ${configPath()}`);
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
 let controls;
@@ -62,8 +63,10 @@ async function shutdown(exitCode) {
   client.destroy();
   controls?.close();
   controls?.closeAllConnections();
-  try { await games.stop(); }
-  catch (error) { console.error('[shutdown]', error.message); exitCode = 1; }
+  const cleanup = await Promise.allSettled([games.stop(), voice.destroyAll()]);
+  for (const result of cleanup) {
+    if (result.status === 'rejected') { console.error('[shutdown]', result.reason.message); exitCode = 1; }
+  }
   process.exit(exitCode);
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { shutdown(0); });
