@@ -4,6 +4,7 @@ import { handleAutocomplete, handleCommand } from './commands.js';
 import { loadConfig, configPath } from './config.js';
 import { games } from './game-manager.js';
 import { voice } from './voice.js';
+import { codex } from './codex-runner.js';
 import { createControlServer } from './control-server.js';
 
 if (!process.env.DISCORD_TOKEN) {
@@ -41,7 +42,13 @@ client.once(Events.ClientReady, (c) => console.log(`Logged in as ${c.user.tag}`)
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isAutocomplete()) return await handleAutocomplete(interaction);
-    if (interaction.isChatInputCommand()) return await handleCommand(interaction);
+    if (interaction.isChatInputCommand()) return await handleCommand(interaction, {
+      // The VPS service uses Restart=on-failure. Finish the Discord reply first,
+      // then stop cleanly with a nonzero status so systemd starts the new code.
+      requestRestart: process.env.CODEX_ALLOW_RESTART === 'true' && process.env.INVOCATION_ID
+        ? () => shutdown(1)
+        : undefined,
+    });
   } catch (err) {
     // Discord API errors may include the failed message body (a private link).
     let message = String(err.message || 'Command failed');
@@ -63,7 +70,7 @@ async function shutdown(exitCode) {
   client.destroy();
   controls?.close();
   controls?.closeAllConnections();
-  const cleanup = await Promise.allSettled([games.stop(), voice.destroyAll()]);
+  const cleanup = await Promise.allSettled([games.stop(), voice.destroyAll(), codex.shutdown()]);
   for (const result of cleanup) {
     if (result.status === 'rejected') { console.error('[shutdown]', result.reason.message); exitCode = 1; }
   }

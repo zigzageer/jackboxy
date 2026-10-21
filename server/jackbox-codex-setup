@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Install and authenticate Codex for the existing unprivileged Jackbox service.
+# Run with sudo after updating the repository and registering slash commands.
+set -euo pipefail
+
+APP_DIR=${JACKBOX_APP_DIR:-/opt/jackbox}
+APP_USER=${JACKBOX_APP_USER:-jackbox}
+CODEX_VERSION=0.163.0
+BOT_DIR=$APP_DIR/repo/bot
+ENV_FILE=$BOT_DIR/.env
+CLI_PREFIX=$APP_DIR/codex-cli
+CLI_BIN=$CLI_PREFIX/bin/codex
+AUTH_DIR=$APP_DIR/home/.codex
+
+if [[ $(id -u) -ne 0 ]]; then echo "Run this with sudo." >&2; exit 1; fi
+if [[ $APP_DIR != /* || $APP_DIR == *$'\n'* || $APP_DIR == *$'\r'* ]]; then
+  echo "JACKBOX_APP_DIR must be an absolute directory path without line breaks." >&2
+  exit 1
+fi
+if [[ ! $APP_USER =~ ^[a-z_][a-z0-9_-]*$ ]] || ! id -u "$APP_USER" >/dev/null 2>&1; then
+  echo "Install the Jackbox service user first." >&2
+  exit 1
+fi
+if [[ ! -f $ENV_FILE ]]; then
+  echo "Configure the bot first with sudo jackbox-config; $ENV_FILE is missing." >&2
+  exit 1
+fi
+
+sudo -H -u "$APP_USER" node -e '
+const [major, minor] = process.versions.node.split(".").map(Number);
+process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1);
+' || { echo "Node.js 22.12 or newer is required." >&2; exit 1; }
+
+install -d -o "$APP_USER" -g "$APP_USER" -m 0755 "$CLI_PREFIX"
+install -d -o "$APP_USER" -g "$APP_USER" -m 0700 "$AUTH_DIR"
+
+installed_version=
+if [[ -x $CLI_BIN ]]; then
+  installed_version=$(sudo -H -u "$APP_USER" env CODEX_HOME="$AUTH_DIR" "$CLI_BIN" --version 2>/dev/null || true)
+fi
+if [[ $installed_version != "codex-cli $CODEX_VERSION" ]]; then
+  echo "Installing Codex CLI $CODEX_VERSION for $APP_USER."
+  sudo -H -u "$APP_USER" npm install --global --prefix "$CLI_PREFIX" \
+    "@openai/codex@$CODEX_VERSION" --no-audit --no-fund
+fi
+installed_version=$(sudo -H -u "$APP_USER" env CODEX_HOME="$AUTH_DIR" "$CLI_BIN" --version)
+if [[ $installed_version != "codex-cli $CODEX_VERSION" ]]; then
+  echo "The installed Codex CLI did not report version $CODEX_VERSION; setup stopped." >&2
+  exit 1
+fi
+
+# Authentication belongs to jackbox, independently of any ubuntu user login or
+# remote-control pairing. Never copy another account's auth files or print them.
+if ! sudo -H -u "$APP_USER" env CODEX_HOME="$AUTH_DIR" "$CLI_BIN" login status >/dev/null 2>&1; then
+  echo "Authenticate Codex for $APP_USER using the device login instructions below."
+  sudo -H -u "$APP_USER" env CODEX_HOME="$AUTH_DIR" "$CLI_BIN" login --device-auth
+fi
+if ! sudo -H -u "$APP_USER" env CODEX_HOME="$AUTH_DIR" "$CLI_BIN" login status >/dev/null 2>&1; then
+  echo "Codex authentication is incomplete; bot configuration was not changed." >&2
+  exit 1
+fi
+
+umask 077
+temporary_env=$(mktemp "$BOT_DIR/.env.codex.XXXXXX")
+trap 'rm -f -- "$temporary_env"' EXIT
+awk '!/^[[:space:]]*(export[[:space:]]+)?(CODEX_ENABLED|CODEX_BIN|CODEX_HOME|CODEX_ALLOW_RESTART)[[:space:]]*=/' "$ENV_FILE" > "$temporary_env"
+cat >> "$temporary_env" <<EOF
+CODEX_ENABLED=true
+CODEX_BIN=$CLI_BIN
+CODEX_HOME=$AUTH_DIR
+CODEX_ALLOW_RESTART=true
+EOF
+chmod 0600 "$temporary_env"
+chown "$APP_USER:$APP_USER" "$temporary_env"
+mv -f -- "$temporary_env" "$ENV_FILE"
+trap - EXIT
+
+systemctl restart jackbox-bot
+echo "Codex is enabled. Only Discord user 573614648239194186 can run /codex."

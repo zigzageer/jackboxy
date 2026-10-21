@@ -53,6 +53,15 @@ Then:
 Never use a Discord user account token. Keep bot and Steam credentials out of
 chat, repository files, logs and shell command arguments.
 
+For the optional owner-only `/codex` repair command, follow
+[Codex maintenance](../bot/README.md#codex-maintenance) after registering the
+updated slash commands. `sudo bash /opt/jackbox/repo/server/jackbox-codex-setup`
+installs the pinned CLI under `/opt/jackbox/codex-cli`, authenticates the
+unprivileged `jackbox` account and enables the feature. It does not reuse an
+`ubuntu` login, grant sudo access or modify your game settings. Only Discord
+user `573614648239194186` can run repairs. Successful repairs can optionally
+restart the bot after delivering their private result.
+
 ## Test in a browser without Discord
 
 With the installer and game configuration already in place, run this in your

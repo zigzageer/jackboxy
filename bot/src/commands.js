@@ -2,9 +2,11 @@ import { SlashCommandBuilder, MessageFlags, AttachmentBuilder, PermissionFlagsBi
 import { loadConfig, resolveGame, packChoices, gameChoices, MENU_KEYS } from './config.js';
 import { games } from './game-manager.js';
 import { voice } from './voice.js';
+import { codexDefinition, handleCodexCommand } from './codex-command.js';
 import { screenAvailable, screenshot, readRoomCodeOnce, waitForRoomCode } from './screen.js';
 
 export const definitions = [
+  codexDefinition,
   new SlashCommandBuilder()
     .setName('vc')
     .setDescription('Join or leave a voice channel while muted and deafened')
@@ -65,8 +67,9 @@ export async function handleAutocomplete(interaction) {
   await interaction.respond(result);
 }
 
-export async function handleCommand(interaction) {
+export async function handleCommand(interaction, options = {}) {
   if (!interaction.guildId) return interaction.reply({ content: 'Use these commands in a server.', flags: MessageFlags.Ephemeral });
+  if (interaction.commandName === 'codex') return handleCodexCommand(interaction, options);
   if (interaction.commandName === 'vc') return handleVoiceCommand(interaction);
   const current = games.current();
   if (current && current.guildId !== interaction.guildId) {

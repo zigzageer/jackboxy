@@ -8,6 +8,10 @@ control link. No Discord voice channel is required.
 Use `/vc join channel:...` to select a server voice channel or paste its ID.
 The bot joins self-muted and self-deafened; `/vc leave` disconnects it.
 
+The optional `/codex prompt:...` command runs Codex on the host to investigate
+and repair problems. It is restricted to Discord user `573614648239194186`;
+see the [maintenance setup](bot/README.md#codex-maintenance).
+
 The host uses arrow, Enter and Back buttons to navigate the game menu. Everyone
 plays and submits answers on [jackbox.tv](https://jackbox.tv) with the room code.
 Use **Save menu steps** after reaching the lobby to automate that selection on

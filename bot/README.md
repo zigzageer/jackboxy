@@ -81,6 +81,9 @@ keys mean the host must choose the game; no menu indexes are guessed.
 
 | Command | What it does |
 | --- | --- |
+| `/codex prompt:...` | Owner only: asks Codex to investigate and repair the host repository. |
+| `/codex action:status` | Owner only: checks whether a repair is running. |
+| `/codex action:cancel` | Owner only: stops the current repair; edits already saved remain on disk. |
 | `/vc join channel:...` | Opens Discord's server voice-channel picker; accepts a channel ID and joins self-muted and self-deafened. |
 | `/vc leave` | Leaves the bot's voice channel in the current server. |
 | `/jackbox pack:3 game:quiplash` | Launches the shared game; both options autocomplete. |
@@ -102,6 +105,63 @@ make the new command available, then restart the bot.
 
 The bot also tries to post the room code after launch. OCR may fail on some
 screens; use the browser stream to read it directly.
+
+## Codex maintenance
+
+`/codex` accepts requests only from Discord user **573614648239194186**.
+Server administrator permissions do not bypass this check. Replies are private;
+requests, tool output and credentials are not posted to the channel. Each job
+runs the Codex CLI locally on the bot's machine, using that Linux account's
+Codex login or API credentials and the associated plan or API billing.
+
+On an installed VPS, update the repository and dependencies, run
+`npm run register` in `bot/`, then run:
+
+```bash
+sudo bash /opt/jackbox/repo/server/jackbox-codex-setup
+```
+
+The helper installs Codex CLI 0.163.0 for the `jackbox` account, starts device
+login if needed, saves the maintenance settings in the existing `.env`, and
+restarts the bot. It preserves the game configuration and other `.env` settings.
+Finish the device login in your browser; pairing a remote device or signing
+in as `ubuntu` does not authenticate the separate `jackbox` account.
+
+For example:
+
+```text
+/codex prompt:The stream sometimes jumps forward five seconds. Diagnose the cause, fix it, and test the change. restart:true
+/codex action:status
+/codex action:cancel
+```
+
+`prompt` starts a repair; `action` defaults to `run`. Only one repair runs at a
+time, with a ten-minute deadline. Cancelled, failed or timed-out repairs may
+have saved partial edits, so review those edits before retrying. The final
+private reply reports the result; only the final assistant summary is returned,
+with credential redaction and Discord mentions and link previews disabled.
+
+Codex runs as the unprivileged bot account with its repository as the working
+directory, the `workspace-write` sandbox and noninteractive approvals. It can
+inspect runtime information available to that account and edit repository
+files. It cannot make root-only system changes; it must report any remaining
+privileged steps. Requests to reset, commit, push, change authentication or
+restart the bot directly are excluded from the maintenance instructions.
+
+Changes to bot code require a restart. With `restart:true`, a successful job
+delivers its private result and then exits cleanly with a failure status so the
+VPS service's `Restart=on-failure` starts the new code. This stops any active
+game and voice connection. Without that option, the bot keeps running until
+you restart it. Automatic restart requires `CODEX_ALLOW_RESTART=true` and a
+systemd invocation, both supplied by the VPS setup.
+
+For a custom deployment, explicitly set `CODEX_ENABLED=true`, `CODEX_BIN` to
+the CLI executable and `CODEX_HOME` to the authenticated service account's
+absolute state directory. An API key can instead be provided securely through
+the service account's Codex authentication setup or its `OPENAI_API_KEY`
+environment variable. The CLI ignores user configuration and execpolicy rules
+for these jobs; this integration uses the standard OpenAI Codex provider.
+Never put API keys in the slash-command prompt or Discord messages.
 
 ## Validation
 
