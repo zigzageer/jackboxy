@@ -224,7 +224,8 @@ test('rejects a concurrent job and current status contains no task or credential
   assert.equal(await h.runner.cancel(owner), false);
 });
 
-test('owner cancellation signals the process group and waits for actual close', async () => {
+test('owner cancellation signals the process group and waits for actual close', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = harness();
   const pending = h.runner.run('fix timing', owner);
   await assert.rejects(h.runner.cancel(other), /Only the configured owner/);

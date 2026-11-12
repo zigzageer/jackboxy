@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "guildId": "123456789012345678",
+  "name": "Signal Yard",
+  "width": 1600,
+  "height": 1100,
+  "spawn": { "x": 800, "y": 520 },
+  "palette": { "ground": "#b7a280", "road": "#5d656f", "accent": "#e2ad5f" },
+  "roads": [
+    { "x": 0, "y": 443, "w": 1600, "h": 154 },
+    { "x": 720, "y": 0, "w": 160, "h": 1100 },
+    { "x": 160, "y": 850, "w": 1280, "h": 112 },
+    { "x": 160, "y": 520, "w": 100, "h": 390 },
+    { "x": 1340, "y": 520, "w": 100, "h": 390 }
+  ],
+  "buildings": [
+    { "id": "station-hall", "label": "Station Hall", "kind": "hall", "x": 316, "y": 138, "w": 294, "h": 250, "door": { "x": 460, "y": 414 } },
+    { "id": "vinyl-exchange", "label": "Vinyl Exchange", "kind": "shop", "x": 960, "y": 172, "w": 280, "h": 216, "door": { "x": 1100, "y": 414 } },
+    { "id": "cliphouse", "label": "The Cliphouse", "kind": "venue", "x": 326, "y": 650, "w": 278, "h": 161, "door": { "x": 466, "y": 836 } },
+    { "id": "maker-depot", "label": "Maker Depot", "kind": "workshop", "x": 970, "y": 647, "w": 262, "h": 164, "door": { "x": 1100, "y": 836 } }
+  ],
+  "landmarks": [
+    { "id": "signal-square", "label": "Signal Square", "kind": "plaza", "x": 800, "y": 695 },
+    { "id": "relay-gardens", "label": "Relay Gardens", "kind": "garden", "x": 210, "y": 245 },
+    { "id": "open-frequency", "label": "Open Frequency Stage", "kind": "stage", "x": 1370, "y": 300 }
+  ],
+  "characterSpawns": [
+    { "x": 615, "y": 511 }, { "x": 990, "y": 522 },
+    { "x": 800, "y": 655 }, { "x": 1150, "y": 545 },
+    { "x": 460, "y": 426 }, { "x": 1100, "y": 426 },
+    { "x": 466, "y": 878 }, { "x": 1100, "y": 878 },
+    { "x": 205, "y": 541 }, { "x": 1390, "y": 541 },
+    { "x": 776, "y": 310 }, { "x": 825, "y": 930 }
+  ]
+}

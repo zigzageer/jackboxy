@@ -3,6 +3,14 @@ import { loadConfig, resolveGame, packChoices, gameChoices, MENU_KEYS } from './
 import { games } from './game-manager.js';
 import { voice } from './voice.js';
 import { codexDefinition, handleCodexCommand } from './codex-command.js';
+import { CODEX_OWNER_ID } from './codex-runner.js';
+import { gameDefinition, fightDefinition, warDefinition, createUbuntuGameHandler } from './rpg/ubuntu-adapter.mjs';
+
+const handleServerGame = createUbuntuGameHandler({ ownerId: CODEX_OWNER_ID });
+const debugDefinition = { ...codexDefinition.toJSON(), name: 'debug', contexts: [0], integration_types: [0] };
+export const startServerGames = (client) => handleServerGame.start(client);
+export const stopServerGames = () => handleServerGame.stop();
+export const handleButton = (interaction) => interaction.customId?.startsWith('mint:match:') ? handleServerGame(interaction) : false;
 import { screenAvailable, screenshot, readRoomCodeOnce, waitForRoomCode } from './screen.js';
 
 export const definitions = [
@@ -46,7 +54,7 @@ export const definitions = [
   new SlashCommandBuilder()
     .setName('jackbox-code')
     .setDescription('Read the room code off the game screen').setDMPermission(false),
-].map((c) => c.toJSON());
+].map((c) => c.toJSON()).concat(gameDefinition, fightDefinition, warDefinition, debugDefinition);
 
 // Re-read on every interaction so edits to games.json apply without a restart.
 function config() {
@@ -68,8 +76,9 @@ export async function handleAutocomplete(interaction) {
 }
 
 export async function handleCommand(interaction, options = {}) {
+  if (['game', 'fight', 'war'].includes(interaction.commandName)) return handleServerGame(interaction);
   if (!interaction.guildId) return interaction.reply({ content: 'Use these commands in a server.', flags: MessageFlags.Ephemeral });
-  if (interaction.commandName === 'codex') return handleCodexCommand(interaction, options);
+  if (['codex', 'debug'].includes(interaction.commandName)) return handleCodexCommand(interaction, options);
   if (interaction.commandName === 'vc') return handleVoiceCommand(interaction);
   const current = games.current();
   if (current && current.guildId !== interaction.guildId) {
