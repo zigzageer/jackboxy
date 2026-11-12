@@ -1,6 +1,7 @@
 import { gameCommand } from './game-command.mjs';
 import { assertSnowflake } from './github-store.mjs';
 import { isDeepStrictEqual } from 'node:util';
+import { CODEX_OWNER_ID } from './codex-runner.mjs';
 
 export const gameDefinition = {
   ...gameCommand,
@@ -55,8 +56,13 @@ export function createQueuedGameHandler({ queue, state, matches, allowedUserIds 
       return true;
     }
     const subcommand = interaction.options.getSubcommand();
+    const owner = interaction.user?.id === CODEX_OWNER_ID;
+    if (subcommand === 'create' && !owner) {
+      await interaction.editReply(reply('Only the bot owner can use /game create.'));
+      return true;
+    }
     if (subcommand === 'link') return matches.handle(interaction);
-    const manager = canManageGame(interaction, allowedUserIds);
+    const manager = owner || canManageGame(interaction, allowedUserIds);
     if (subcommand === 'status') {
       const id = interaction.options.getString('job');
       const selected = id ? queue.get(id) : null;
@@ -99,11 +105,6 @@ export function createQueuedGameHandler({ queue, state, matches, allowedUserIds 
       });
     }
     const previous = queue.list({ guildId: interaction.guildId, type: subcommand, ...(memberId ? { memberId } : {}), limit: 1 })[0];
-    if (subcommand === 'create' && previous?.status === 'succeeded' && previous.result?.url) {
-      state.registerGuild({ guildId: interaction.guildId, channelId: interaction.channelId, name: interaction.guild.name, gameUrl: previous.result.url });
-      await interaction.editReply(reply(`This server already has a game.\n${jobStatus(previous)}`));
-      return true;
-    }
     let job;
     let existing = false;
     if (previous?.status === 'failed' && (subcommand === 'create' || isDeepStrictEqual(generationOptions(previous.payload), generationOptions(payload)))) {

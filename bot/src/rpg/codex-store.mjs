@@ -3,7 +3,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { assertSnowflake, manifestPath } from "./github-store.mjs";
-import { createCodexRunner, CODEX_OWNER_ID } from "./codex-runner.mjs";
+import { createCodexRunner, CODEX_OWNER_ID, sanitizeCodexText } from "./codex-runner.mjs";
+
+export class GamePublishError extends Error {
+  constructor(stage, message, { code, runnerId } = {}) {
+    super(`Game transaction failed at ${stage}. ${sanitizeCodexText(message).slice(0, 1000)}`);
+    this.name = "GamePublishError";
+    this.stage = stage;
+    this.code = code || "GAME_TRANSACTION_FAILED";
+    this.runnerId = runnerId || null;
+  }
+}
 
 const RESULT_SCHEMA = {
   type: "object",
@@ -18,6 +28,9 @@ const RESULT_SCHEMA = {
     commit: { type: ["string", "null"] },
     deploymentId: { type: ["string", "null"] },
     deploymentState: { enum: ["READY", "PENDING", "FAILED", null] },
+    stage: { type: ["string", "null"] },
+    error: { type: ["string", "null"] },
+    errorCode: { type: ["string", "null"] },
   },
   required: [
     "status",
@@ -29,6 +42,9 @@ const RESULT_SCHEMA = {
     "commit",
     "deploymentId",
     "deploymentState",
+    "stage",
+    "error",
+    "errorCode",
   ],
 };
 const SHA = /^[a-f0-9]{40}$/;
@@ -54,6 +70,9 @@ async function connectedGameTask(directory) {
     commit: null,
     deploymentId: null,
     deploymentState: null,
+    stage: "reading-job",
+    error: null,
+    errorCode: null,
   };
   const checkpoint = async () => {
     const saved = await tools.exec_command({
@@ -86,6 +105,7 @@ async function connectedGameTask(directory) {
     return JSON.parse(response.content);
   };
   try {
+    result.stage = "resolving-branch";
     result.branch = job.branch || (await githubGet("")).default_branch;
     if (typeof result.branch !== "string" || !result.branch)
       throw new Error("The game repository has no default branch");
@@ -107,6 +127,7 @@ async function connectedGameTask(directory) {
       }
     };
     if (job.task === "snapshot") {
+      result.stage = "reading-repository";
       const ref = await githubGet(
         `/git/ref/heads/${branchPath}`,
       );
@@ -116,6 +137,7 @@ async function connectedGameTask(directory) {
       result.gameJson = await readJson(job.manifestPath);
       if (job.townPath) result.townJson = await readJson(job.townPath);
       result.status = "snapshot";
+      result.stage = "complete";
     } else {
       if (job.task === "publish") {
         const files = [
@@ -140,6 +162,7 @@ async function connectedGameTask(directory) {
         const binaryFiles = [...(job.binaryFiles || [])];
         if (job.sprite) binaryFiles.push({ ...job.sprite, localName: "sprite.png" });
         for (const binary of binaryFiles) {
+          result.stage = "uploading-artwork";
           // Base64 stays in the executor. Read bounded chunks to avoid shell
           // argument limits and truncation of a tool's output.
           const parts = [];
@@ -183,6 +206,7 @@ async function connectedGameTask(directory) {
             sha: blob.sha,
           });
         }
+        result.stage = "writing-tree";
         const tree = unwrap(
           await tools.mcp__codex_apps__github_create_tree({
             repository_full_name: job.repository,
@@ -190,6 +214,7 @@ async function connectedGameTask(directory) {
             tree_elements: files,
           }),
         );
+        result.stage = "creating-commit";
         const commit = unwrap(
           await tools.mcp__codex_apps__github_create_commit({
             repository_full_name: job.repository,
@@ -199,6 +224,7 @@ async function connectedGameTask(directory) {
           }),
         );
         try {
+          result.stage = "updating-branch";
           unwrap(
             await tools.mcp__codex_apps__github_update_ref({
               repository_full_name: job.repository,
@@ -225,6 +251,7 @@ async function connectedGameTask(directory) {
         throw new Error("Unknown game task");
       result.status = "published";
       result.deploymentState = "PENDING";
+      result.stage = job.task === "deployment-status" ? "checking-deployment" : "starting-deployment";
       // Persist the successful ref update before starting an asynchronous build.
       await checkpoint();
       const created = job.task === "deployment-status"
@@ -248,6 +275,7 @@ async function connectedGameTask(directory) {
         }));
       let deployment = created.deployment ?? created;
       result.deploymentId = deployment.id;
+      result.stage = "waiting-deployment";
       await checkpoint();
       for (let attempt = 0; attempt < 24; attempt++) {
         if (["READY", "ERROR", "CANCELED"].includes(deployment.readyState))
@@ -267,8 +295,23 @@ async function connectedGameTask(directory) {
           : ["ERROR", "CANCELED"].includes(deployment.readyState)
             ? "FAILED"
             : "PENDING";
+      if (result.deploymentState === "READY") result.stage = "complete";
     }
-  } catch {
+  } catch (error) {
+    const code = String(error?.code || "CONNECTED_TASK_FAILED");
+    result.errorCode = /^[a-z0-9_:-]{1,80}$/i.test(code) ? code : "CONNECTED_TASK_FAILED";
+    const messages = {
+      "resolving-branch": "Could not resolve the game repository branch.",
+      "reading-repository": "Could not read the latest game files from GitHub.",
+      "uploading-artwork": "Could not upload the generated artwork to GitHub.",
+      "writing-tree": "Could not prepare the atomic game file update in GitHub.",
+      "creating-commit": "Could not create the game update commit.",
+      "updating-branch": "Could not update the game branch.",
+      "starting-deployment": "Could not start the Vercel deployment.",
+      "checking-deployment": "Could not inspect the Vercel deployment.",
+      "waiting-deployment": "Could not read the Vercel build status.",
+    };
+    result.error = `${messages[result.stage] || "The connected game transaction failed."} (${result.errorCode})`;
     // A failed deployment must retain the recorded successful Git commit.
     if (result.status === "published") result.deploymentState = "FAILED";
     else result.status = "failed";
@@ -349,7 +392,7 @@ export function createConnectedGameTask({
       });
       signal?.addEventListener("abort", abort, { once: true });
       signal?.throwIfAborted();
-      await runner.run("Execute the saved game transaction.", {
+      const outcome = await runner.run("Execute the saved game transaction.", {
         userId: CODEX_OWNER_ID,
       });
       signal?.throwIfAborted();
@@ -369,9 +412,15 @@ export function createConnectedGameTask({
           /* Try the final structured response if the checkpoint is incomplete. */
         }
       }
-      throw new Error(
-        "Codex could not finish publishing. Check the VPS Codex login and connected apps, then retry.",
-      );
+      const diagnostic = outcome?.diagnostic;
+      const stage = /^codex-(?:startup|session)$/.test(diagnostic?.stage || "") ? diagnostic.stage : "codex-result";
+      const detail = outcome?.status === "completed"
+        ? "Codex completed without saving a valid game transaction result."
+        : diagnostic?.message || outcome?.summary || "Codex did not return a saved game transaction result.";
+      throw new GamePublishError(stage, sanitizeCodexText(detail, codexEnv), {
+        code: diagnostic?.code,
+        runnerId: outcome?.id,
+      });
     } catch (error) {
       signal?.throwIfAborted();
       throw error;

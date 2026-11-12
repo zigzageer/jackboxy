@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { gameConfig } from './config.mjs';
 import { BundlePublisher } from './bundle-publisher.mjs';
 import { createImageGenerator } from './image-generator.mjs';
@@ -27,7 +28,12 @@ export function createGameRuntime(env = process.env, { client, logger = console 
   const processGame = createGameProcessor({
     publisher,
     generateCharacter: createImageGenerator(config),
-    generateTown: createTownGenerator(config),
+    generateTown: createTownGenerator({
+      ...config,
+      buildingWorkers: Number(env.GAME_BUILDING_WORKERS || '2'),
+      referencePaths: ['clan-hall.webp', 'incel-arcade.webp'].map((name) =>
+        fileURLToPath(new URL(`./references/${name}`, import.meta.url))),
+    }),
     client,
     state,
     artifactDirectory: path.join(directory, 'artifacts'),

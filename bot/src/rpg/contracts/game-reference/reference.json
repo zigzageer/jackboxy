@@ -1,0 +1,5 @@
+{
+  "repository": "zigzageer/grapevinerpg",
+  "commit": "d9df0e5092c854620dcd90ea99a594090630e997",
+  "validator": "scripts/validate-town.mjs"
+}

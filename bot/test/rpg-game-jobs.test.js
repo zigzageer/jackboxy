@@ -1,10 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createGameProcessor, createJobNotifier, publicChannelNames } from '../src/rpg/game-jobs.mjs';
 import { JobQueue, JobShutdownError } from '../src/rpg/job-queue.mjs';
+import { assertTown } from '../src/rpg/town-validation.mjs';
+import { createTownAssetReader, createLiveTownVerifier, decodeTownArtwork } from '../src/rpg/town-assets.mjs';
+import sharp from 'sharp';
+import { validateTownFile } from '../src/rpg/town-contract.mjs';
+import { createTownGenerator } from '../src/rpg/town-generator.mjs';
 
 const GUILD = '123456789012345678';
 const MEMBER = '223456789012345678';
@@ -12,8 +18,16 @@ const OTHER = '323456789012345678';
 const REQUESTER = '423456789012345678';
 const CHANNEL = '523456789012345678';
 const SAMPLE = JSON.parse(await readFile(new URL('../src/rpg/contracts/sample-town.json', import.meta.url), 'utf8'));
+const PNG = await sharp({ create: { width: 8, height: 8, channels: 4, background: '#cc554488' } }).png().toBuffer();
+const WEBP = await sharp(PNG).webp({ lossless: true }).toBuffer();
+const NATIVE_PNG = await sharp(PNG).extend({ top: 2, bottom: 2, left: 2, right: 2, background: '#00000000' }).png().toBuffer();
 const game = () => ({ version: 1, guildId: GUILD, slug: `fixture-${GUILD}`, name: 'Fixture Town', characters: [], websiteSettings: { weather: 'rain' } });
 const town = () => structuredClone(SAMPLE);
+const completeTown = (format = 'webp') => {
+  const document = town();
+  for (const building of document.buildings) building.art = `/games/${GUILD}/town/${building.id}.${format}`;
+  return document;
+};
 
 function deferred() {
   let resolve;
@@ -30,22 +44,22 @@ async function until(condition, timeoutMs = 5000) {
 }
 
 function publisherFixture({ initialGame = null, initialTown = null, beforePublish, deploymentStates = ['READY'] } = {}) {
-  const current = { game: initialGame, town: initialTown, files: new Map(), calls: [], statusCalls: [], commits: 0 };
+  const current = { game: initialGame, town: initialTown, files: new Map(), calls: [], statusCalls: [], commits: 0, head: 'a'.repeat(40) };
   let publicationTail = Promise.resolve();
   let deployments = 0;
   const publisher = {
-    async snapshot() { return structuredClone({ game: current.game, town: current.town, branch: 'latest-default' }); },
+    async snapshot() { return structuredClone({ game: current.game, town: current.town, head: current.head, branch: 'latest-default' }); },
     async publish(guildId, change, options) {
       const previous = publicationTail;
       let release;
       publicationTail = new Promise((resolve) => { release = resolve; });
       await previous;
       try {
-        if (beforePublish) await beforePublish(current, options);
+        if (beforePublish) { await beforePublish(current, options); current.head = 'd'.repeat(40); }
         const applied = Boolean(current.game?.botJobs?.[options.jobId]);
         let files = [];
         if (!applied) {
-          const changed = await change(structuredClone({ game: current.game, town: current.town }));
+          const changed = await change(structuredClone({ game: current.game, town: current.town, head: current.head, branch: 'latest-default' }));
           files = changed.files ?? options.files ?? [];
           current.game = { ...changed.game, botJobs: { ...changed.game.botJobs, [options.jobId]: true } };
           current.town = changed.town;
@@ -100,14 +114,22 @@ async function processorFixture(t, options = {}) {
     generateCharacter: options.generateCharacter || (async (input) => { generated.characters.push(input); return Buffer.from('generated sprite'); }),
     generateTown: options.generateTown || (async (input) => {
       generated.towns.push(input);
-      const document = town();
-      document.buildings[0].art = `/games/${GUILD}/town/hall.png`;
-      return { town: document, files: [{ path: 'town/hall.png', bytes: Buffer.from('generated town art') }] };
+      const document = structuredClone(input.town || town());
+      const files = [];
+      for (const building of document.buildings) {
+        if (building.art) continue;
+        building.art = `/games/${GUILD}/town/${building.id}.webp`;
+        files.push({ path: `town/${building.id}.webp`, bytes: WEBP });
+      }
+      return { town: document, files };
     }),
     client: { guilds: { fetch: async (id) => { assert.equal(id, GUILD); return guild; } } },
     state: { registerGuild: (value) => { generated.registered.push(value); } },
     artifactDirectory: directory,
     baseUrl: 'https://game.example/',
+    readAsset: options.readAsset || (async ({ assetPath }) => fixture.current.files.get(assetPath.slice(`/games/${GUILD}/`.length)) || null),
+    verifyLiveTown: options.verifyLiveTown || (async () => false),
+    validateTown: options.validateTown || (async ({ town: document, guildId }) => assertTown(document, guildId)),
     deploymentPollMs: 1,
     deploymentTimeoutMs: 50,
     ...options.processor,
@@ -161,7 +183,11 @@ test('create publishes validated town, artwork and an empty roster using the ser
   assert.equal(fixture.current.game.town.path, `/games/${GUILD}/town.json`);
   assert.equal(fixture.generated.towns[0].guildName, 'Server Name');
   assert.deepEqual(fixture.generated.towns[0].channelNames, ['music', 'workshop']);
-  assert.equal(fixture.current.files.get('town/hall.png').toString(), 'generated town art');
+  assert.equal(fixture.current.files.size, fixture.current.town.buildings.length);
+  for (const building of fixture.current.town.buildings) {
+    assert.match(building.art, /\.webp$/);
+    assert.deepEqual(fixture.current.files.get(building.art.slice(`/games/${GUILD}/`.length)), WEBP);
+  }
   assert.equal(fixture.generated.registered[0].gameUrl, result.url);
   assert.equal(result.deployment.state, 'READY');
   assert.match(result.url, new RegExp(`^https://game.example/server-name-${GUILD}$`));
@@ -259,19 +285,19 @@ test('interrupted town publishing reloads saved town artwork and preserves later
 });
 
 test('a concurrently published website town suppresses stale generated building art', async (t) => {
-  const editedTown = town();
+  const editedTown = completeTown();
   editedTown.name = 'Website Town';
   const fixture = await processorFixture(t, {
     beforePublish: async (current) => {
       current.game = { ...game(), town: { path: `/games/${GUILD}/town.json` }, websiteOnly: 'preserve' };
       current.town = editedTown;
-      current.files.set('town/hall.png', Buffer.from('website artwork'));
+      for (const building of editedTown.buildings) current.files.set(building.art.slice(`/games/${GUILD}/`.length), WEBP);
     },
   });
   const current = job('create');
   await fixture.process(current, { checkpoint: checkpointFor(current) });
   assert.deepEqual(fixture.current.calls[0].files, []);
-  assert.equal(fixture.current.files.get('town/hall.png').toString(), 'website artwork');
+  assert.deepEqual(fixture.current.files.get('town/station-hall.webp'), WEBP);
   assert.equal(fixture.current.town.name, 'Website Town');
   assert.equal(fixture.current.game.websiteOnly, 'preserve');
 });
@@ -374,4 +400,234 @@ test('completion notices use normal channel messages and mention only the reques
   assert.equal(sent.nonce, 'persistent-notice');
   assert.equal(sent.enforceNonce, true);
   assert.match(sent.content, new RegExp(`<@${REQUESTER}>`));
+});
+
+test('a fully verified live town returns its existing link and preserves every remote PNG without republishing', async (t) => {
+  const document = completeTown('png');
+  const initial = { ...game(), slug: 'keep-this-url', town: { path: `/games/${GUILD}/town.json` }, characters: [{ id: 'website-friend' }], history: ['keep'] };
+  const reads = [];
+  const fixture = await processorFixture(t, { initialGame: initial, initialTown: document,
+    readAsset: async (input) => { reads.push(input); return PNG; },
+    verifyLiveTown: async (input) => { assert.deepEqual(input.game, initial); assert.deepEqual(input.town, document); return true; },
+  });
+  const current = job('create', { result: { publication: { game: { ...initial, name: 'Obsolete cached name' }, deployment: { state: 'READY', id: 'dpl_old' } } } });
+  const result = await fixture.process(current, { checkpoint: checkpointFor(current) });
+  assert.equal(result.url, 'https://game.example/keep-this-url');
+  assert.equal(result.gameName, initial.name);
+  assert.equal(reads.length, document.buildings.length);
+  assert.ok(reads.every((input) => input.head === 'a'.repeat(40)));
+  assert.equal(fixture.generated.towns.length, 0);
+  assert.equal(fixture.current.calls.length, 0);
+  assert.deepEqual(fixture.current.game, initial);
+  assert.deepEqual(fixture.current.town, document);
+});
+
+test('a missing PNG asset is filled with its own WebP while other existing art, URL, layout and roster remain exact', async (t) => {
+  const document = completeTown('png');
+  const initial = { ...game(), slug: 'original-url', town: { path: `/games/${GUILD}/town.json` }, characters: [{ id: 'keep-roster' }] };
+  const fixture = await processorFixture(t, { initialGame: initial, initialTown: document });
+  for (const building of document.buildings.slice(1)) fixture.current.files.set(building.art.slice(`/games/${GUILD}/`.length), PNG);
+  const current = job('create');
+  const result = await fixture.process(current, { checkpoint: checkpointFor(current) });
+  assert.equal(fixture.generated.towns.length, 1);
+  const input = fixture.generated.towns[0].town;
+  assert.equal(input.buildings[0].art, undefined);
+  assert.equal(input.buildings[1].art, document.buildings[1].art);
+  assert.equal(fixture.current.calls[0].files.length, 1);
+  assert.equal(fixture.current.town.buildings[0].art, `/games/${GUILD}/town/station-hall.webp`);
+  assert.deepEqual(fixture.current.town.buildings.slice(1), document.buildings.slice(1));
+  assert.deepEqual(fixture.current.town.roads, document.roads);
+  assert.deepEqual(fixture.current.town.characterSpawns, document.characterSpawns);
+  assert.deepEqual(fixture.current.game.characters, initial.characters);
+  assert.equal(fixture.current.game.slug, 'original-url');
+  assert.equal(result.url, 'https://game.example/original-url');
+  assert.equal((await decodeTownArtwork(fixture.current.files.get('town/station-hall.webp'))).format, 'webp');
+});
+
+test('an invalid existing image fails at art validation without erasing or replacing its art reference', async (t) => {
+  const document = completeTown('png');
+  const fixture = await processorFixture(t, { initialGame: game(), initialTown: document, readAsset: async () => Buffer.from('invalid image') });
+  const current = job('create');
+  await assert.rejects(fixture.process(current, { checkpoint: checkpointFor(current) }), /station-hall could not be decoded/);
+  assert.equal(current.stage, 'validating-existing-art');
+  assert.deepEqual(fixture.current.town, document);
+  assert.equal(fixture.current.calls.length, 0);
+  assert.equal(fixture.generated.towns.length, 0);
+});
+
+test('complete Git town art still checks the actual deployment when live verification fails', async (t) => {
+  const document = completeTown('png');
+  const fixture = await processorFixture(t, { initialGame: game(), initialTown: document, readAsset: async () => PNG, deploymentStates: ['PENDING'] });
+  const current = job('create');
+  await fixture.process(current, { checkpoint: checkpointFor(current) });
+  assert.equal(fixture.generated.towns.length, 0);
+  assert.equal(fixture.current.calls.length, 1);
+  assert.deepEqual(fixture.current.calls[0].files, []);
+  assert.equal(fixture.current.statusCalls.length, 1);
+});
+
+test('a concurrent website upload at the same previously missing URL suppresses obsolete generated bytes', async (t) => {
+  const document = completeTown('png');
+  const fixture = await processorFixture(t, { initialGame: game(), initialTown: document,
+    beforePublish: async (current) => { current.files.set('town/station-hall.png', PNG); current.game.websiteSettings.weather = 'snow'; },
+  });
+  for (const building of document.buildings.slice(1)) fixture.current.files.set(building.art.slice(`/games/${GUILD}/`.length), PNG);
+  const current = job('create');
+  await fixture.process(current, { checkpoint: checkpointFor(current) });
+  assert.equal(fixture.generated.towns.length, 1);
+  assert.deepEqual(fixture.current.calls[0].files, []);
+  assert.equal(fixture.current.town.buildings[0].art, document.buildings[0].art);
+  assert.equal(fixture.current.files.has('town/station-hall.webp'), false);
+  assert.equal(fixture.current.game.websiteSettings.weather, 'snow');
+});
+
+test('concurrent layout edits cause a safe retry while preserving all new website state', async (t) => {
+  const document = completeTown('png');
+  const fixture = await processorFixture(t, { initialGame: game(), initialTown: document,
+    beforePublish: async (current) => { current.town.buildings[0].label = 'Website Rename'; current.game.characters.push({ id: 'new-website-character' }); },
+  });
+  for (const building of document.buildings.slice(1)) fixture.current.files.set(building.art.slice(`/games/${GUILD}/`.length), PNG);
+  const current = job('create');
+  await assert.rejects(fixture.process(current, { checkpoint: checkpointFor(current) }), /town changed while artwork/);
+  assert.equal(fixture.current.town.buildings[0].label, 'Website Rename');
+  assert.equal(fixture.current.town.buildings[0].art, document.buildings[0].art);
+  assert.equal(fixture.current.game.characters.at(-1).id, 'new-website-character');
+  assert.equal(fixture.current.files.has('town/station-hall.webp'), false);
+  assert.ok(current.artifacts.files.some((file) => file.name === 'town/station-hall.webp'));
+});
+
+test('an unpublished legacy PNG is converted locally and reused while only missing buildings are generated', async (t) => {
+  const fixture = await processorFixture(t);
+  const current = job('create');
+  const document = town();
+  document.buildings[0].art = `/games/${GUILD}/town/legacy-hall.png`;
+  const directory = path.join(fixture.directory, current.id);
+  await mkdir(path.join(directory, 'town'), { recursive: true });
+  const bytes = Buffer.from(JSON.stringify(document));
+  await writeFile(path.join(directory, 'town.json'), bytes);
+  await writeFile(path.join(directory, 'town/legacy-hall.png'), PNG);
+  const artifact = (name, content) => ({ name, size: content.length, sha256: createHash('sha256').update(content).digest('hex') });
+  current.artifacts = { town: artifact('town.json', bytes), files: [artifact('town/legacy-hall.png', PNG)] };
+  await fixture.process(current, { checkpoint: checkpointFor(current) });
+  assert.equal(fixture.generated.towns[0].town.buildings[0].art, `/games/${GUILD}/town/legacy-hall.webp`);
+  assert.equal(fixture.current.calls[0].files.length, document.buildings.length);
+  assert.equal(fixture.current.files.has('town/legacy-hall.png'), false);
+  assert.equal((await decodeTownArtwork(fixture.current.files.get('town/legacy-hall.webp'))).format, 'webp');
+  assert.deepEqual(fixture.current.town.roads, document.roads);
+});
+
+test('an old partial-town job marker cannot suppress the new missing-art repair', async (t) => {
+  const initial = { ...game(), botJobs: { 'job-create': true } };
+  const fixture = await processorFixture(t, { initialGame: initial, initialTown: town() });
+  const current = job('create');
+  await fixture.process(current, { checkpoint: checkpointFor(current) });
+  assert.match(fixture.current.calls[0].jobId, /^job-create-art-[a-f0-9]{12}$/);
+  assert.equal(fixture.current.calls[0].applied, false);
+  assert.equal(fixture.current.calls[0].files.length, fixture.current.town.buildings.length);
+  assert.equal(fixture.current.game.botJobs['job-create'], true);
+  assert.ok(fixture.current.town.buildings.every((building) => building.art.endsWith('.webp')));
+});
+
+test('converted legacy art stays durable when native generation writes a partial town and fails before publication', async (t) => {
+  const nativeCalls = new Map();
+  let failOnce = true;
+  const generator = createTownGenerator({
+    buildingWorkers: 2,
+    validate: async ({ town: document, guildId }) => assertTown(document, guildId),
+    runnerFactory: ({ workdir }) => ({
+      async run() {
+        const buildingId = path.basename(workdir);
+        nativeCalls.set(buildingId, (nativeCalls.get(buildingId) || 0) + 1);
+        if (buildingId === 'vinyl-exchange' && failOnce) { failOnce = false; return { status: 'failed' }; }
+        await writeFile(path.join(workdir, 'native-output.png'), NATIVE_PNG);
+        return { status: 'completed' };
+      },
+      async shutdown() {},
+    }),
+  });
+  const fixture = await processorFixture(t, { generateTown: generator });
+  const current = job('create');
+  const document = town();
+  document.buildings[0].art = `/games/${GUILD}/town/legacy-hall.png`;
+  const directory = path.join(fixture.directory, current.id);
+  await mkdir(path.join(directory, 'town'), { recursive: true });
+  const bytes = Buffer.from(JSON.stringify(document));
+  await writeFile(path.join(directory, 'town.json'), bytes);
+  await writeFile(path.join(directory, 'town/legacy-hall.png'), PNG);
+  const artifact = (name, content) => ({ name, size: content.length, sha256: createHash('sha256').update(content).digest('hex') });
+  current.artifacts = { town: artifact('town.json', bytes), files: [artifact('town/legacy-hall.png', PNG)] };
+  await assert.rejects(fixture.process(current, { checkpoint: checkpointFor(current) }), /Codex did not finish/);
+  assert.equal(current.artifacts.town.name, 'town-source.json');
+  const source = await readFile(path.join(directory, current.artifacts.town.name));
+  assert.equal(createHash('sha256').update(source).digest('hex'), current.artifacts.town.sha256);
+  const converted = await readFile(path.join(directory, 'town/legacy-hall.webp'));
+  assert.equal((await decodeTownArtwork(converted)).format, 'webp');
+  assert.ok(current.artifacts.files.some((file) => file.name === 'town/legacy-hall.webp'));
+  const partial = JSON.parse(await readFile(path.join(directory, 'town.json'), 'utf8'));
+  assert.equal(partial.buildings[0].art, `/games/${GUILD}/town/legacy-hall.webp`);
+  assert.notDeepEqual(partial, JSON.parse(source));
+  assert.equal(fixture.current.calls.length, 0);
+  await fixture.process(current, { checkpoint: checkpointFor(current) });
+  assert.equal(nativeCalls.get('station-hall') || 0, 0, 'The original hall is never sent to native generation again');
+  assert.equal(nativeCalls.get('vinyl-exchange'), 2, 'Only the failed building is retried');
+  assert.equal(nativeCalls.get('cliphouse'), 1);
+  assert.equal(nativeCalls.get('maker-depot'), 1);
+  assert.equal(fixture.current.files.size, document.buildings.length);
+  assert.deepEqual(fixture.current.files.get('town/legacy-hall.webp'), converted);
+  assert.deepEqual(fixture.current.town.roads, document.roads);
+  assert.equal(fixture.current.town.buildings[0].art, `/games/${GUILD}/town/legacy-hall.webp`);
+});
+
+test('town asset reads pin the Git head and reject external, cross-guild, traversal and unpinned requests before fetching', async () => {
+  const requests = [];
+  const read = createTownAssetReader({ repository: 'owner/game', fetch: async (url, options) => {
+    requests.push({ url, options });
+    return new Response(PNG, { status: 200, headers: { 'content-type': 'image/png' } });
+  } });
+  const input = { guildId: GUILD, assetPath: `/games/${GUILD}/town/hall.png`, head: 'a'.repeat(40) };
+  assert.deepEqual(await read(input), PNG);
+  assert.equal(requests[0].url, `https://raw.githubusercontent.com/owner/game/${input.head}/public/games/${GUILD}/town/hall.png`);
+  assert.equal(requests[0].options.redirect, 'error');
+  for (const assetPath of ['https://other.example/art.webp', `/games/${MEMBER}/town/hall.png`, `/games/${GUILD}/town/../secret.png`]) {
+    await assert.rejects(read({ ...input, assetPath }), /artwork/);
+  }
+  await assert.rejects(read({ ...input, head: 'main' }), /pinned/);
+  assert.equal(requests.length, 1);
+});
+
+test('town asset reads distinguish a missing file from a failed or oversized fetch', async () => {
+  const input = { guildId: GUILD, assetPath: `/games/${GUILD}/town/hall.png`, head: 'a'.repeat(40) };
+  const missing = createTownAssetReader({ repository: 'owner/game', fetch: async () => new Response(null, { status: 404 }) });
+  assert.equal(await missing(input), null);
+  const failed = createTownAssetReader({ repository: 'owner/game', fetch: async () => new Response(null, { status: 403 }) });
+  await assert.rejects(failed(input), /failed \(403\)/);
+  const oversized = createTownAssetReader({ repository: 'owner/game', fetch: async () => new Response(PNG, { headers: { 'content-length': '2000001' } }) });
+  await assert.rejects(oversized(input), /too large/);
+});
+
+test('live verification requires matching documents and decodable art at the trusted game origin', async () => {
+  const document = completeTown('png');
+  const initial = game();
+  const requests = [];
+  let missing = false;
+  const verify = createLiveTownVerifier({ baseUrl: 'https://game.example', fetch: async (url, options) => {
+    requests.push(url.href);
+    assert.equal(options.redirect, 'error');
+    if (url.pathname.endsWith('game.json')) return new Response(JSON.stringify(initial));
+    if (url.pathname.endsWith('town.json')) return new Response(JSON.stringify(document));
+    return missing ? new Response(null, { status: 404 }) : new Response(PNG);
+  } });
+  assert.equal(await verify({ guildId: GUILD, game: initial, town: document }), true);
+  assert.ok(requests.every((url) => url.startsWith(`https://game.example/games/${GUILD}/`)));
+  missing = true;
+  assert.equal(await verify({ guildId: GUILD, game: initial, town: document }), false);
+});
+
+test('the processor runs the supplied shared town validator before its publish callback can commit', async (t) => {
+  let validations = 0;
+  const fixture = await processorFixture(t, { validateTown: async (input) => { validations++; return validateTownFile(input); } });
+  const current = job('create');
+  await fixture.process(current, { checkpoint: checkpointFor(current) });
+  assert.equal(validations, 2);
+  assert.equal(fixture.current.commits, 1);
 });

@@ -4,8 +4,11 @@ import { readFile, access, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { BundlePublisher } from "../src/rpg/bundle-publisher.mjs";
-import { CodexGameStore, createConnectedGameTask } from "../src/rpg/codex-store.mjs";
+import { CodexGameStore, createConnectedGameTask, GamePublishError } from "../src/rpg/codex-store.mjs";
+import { createCodexRunner, CODEX_OWNER_ID } from "../src/rpg/codex-runner.mjs";
 
 const exec = promisify(execFile);
 const GUILD = "123456789012345678";
@@ -466,4 +469,109 @@ test("cancelling active publication does not start reconciliation or deployment 
   controller.abort(reason);
   await assert.rejects(pending, (error) => error === reason);
   assert.deepEqual(calls, ["snapshot", "publish"]);
+});
+
+test("auto-review publishing selects the built-in workspace policy without conflicting sandbox flags", async () => {
+  let args;
+  const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+  const runner = createCodexRunner({
+    env: { CODEX_ENABLED: "true", PATH: process.env.PATH }, getUid: () => 1000, autoReview: true,
+    spawnFn: (_command, flags) => { args = flags; return child; }, logger: { error() {} },
+  });
+  const pending = runner.run("A publishing startup fixture", { userId: CODEX_OWNER_ID });
+  assert.equal(args.filter((arg) => arg === "--approve-for-me").length, 1);
+  assert.equal(args.includes("--sandbox"), false);
+  assert.equal(args.includes('approval_policy="never"'), false);
+  assert.equal(args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
+  child.stdout.write(`${JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Startup fixture passed." } })}\n`);
+  child.stdout.write(`${JSON.stringify({ type: "turn.completed" })}\n`);
+  child.emit("close", 0);
+  assert.equal((await pending).status, "completed");
+});
+
+test("runner startup diagnostics retain a sanitized CLI error while private-safe summaries stay generic", async () => {
+  const secret = "fixture-discord-token-value";
+  const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+  const runner = createCodexRunner({
+    env: { CODEX_ENABLED: "true", PATH: process.env.PATH, DISCORD_TOKEN: secret }, getUid: () => 1000,
+    spawnFn: () => child, logger: { error() {} },
+  });
+  const pending = runner.run("A startup error fixture", { userId: CODEX_OWNER_ID });
+  child.stderr.write(`error: conflicting command options ${secret}\n\nUsage: codex exec [OPTIONS]\n`);
+  child.emit("close", 2);
+  const result = await pending;
+  assert.equal(result.diagnostic.stage, "codex-startup");
+  assert.equal(result.diagnostic.exitCode, 2);
+  assert.match(result.diagnostic.message, /conflicting command options \[redacted\]/);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+  assert.doesNotMatch(result.summary, /conflicting command options/);
+});
+
+test("a missing transaction checkpoint exposes the safe runner failure and concrete startup stage", async () => {
+  const secret = "fixture-provider-token-value";
+  const task = createConnectedGameTask({
+    codexEnv: { OPENAI_API_KEY: secret },
+    runnerFactory: () => ({ run: async () => ({
+      id: "fixture-runner-id", status: "failed", summary: "The runner failed.",
+      diagnostic: { stage: "codex-startup", code: "CODEX_EXEC_FAILED", message: `error: incompatible CLI options ${secret}` },
+    }) }),
+  });
+  await assert.rejects(task({ task: "publish", repository: "owner/game" }), (error) => {
+    assert.ok(error instanceof GamePublishError);
+    assert.equal(error.stage, "codex-startup");
+    assert.equal(error.runnerId, "fixture-runner-id");
+    assert.equal(error.code, "CODEX_EXEC_FAILED");
+    assert.match(error.message, /incompatible CLI options \[redacted\]/);
+    assert.doesNotMatch(error.message, new RegExp(secret));
+    return true;
+  });
+});
+
+test("a completed runner without a saved transaction never forwards its unsupported success claim", async () => {
+  const task = createConnectedGameTask({ runnerFactory: () => ({ run: async () => ({ status: "completed", summary: "private unsupported success claim" }) }) });
+  await assert.rejects(task({ task: "publish", repository: "owner/game" }), (error) => {
+    assert.equal(error.stage, "codex-result");
+    assert.match(error.message, /without saving a valid game transaction result/);
+    assert.doesNotMatch(error.message, /private|unsupported success claim/);
+    return true;
+  });
+});
+
+test("connected tool failures record the precise transaction stage and a safe error code", async () => {
+  const task = createConnectedGameTask({ runnerFactory: scriptRunner(() => ({
+    mcp__codex_apps__github_create_blob: async () => ({ isError: true, structuredContent: { error_code: "APPROVAL_REJECTED" } }),
+  })) });
+  const result = await task({
+    task: "publish", repository: "owner/game", branch: "main", expectedHead: HEAD, baseTree: TREE,
+    manifestPath: `public/games/${GUILD}/game.json`, game: game(),
+    binaryFiles: [{ path: `public/games/${GUILD}/town/hall.png`, localName: "asset-0.bin", size: 3 }],
+  }, [{ localName: "asset-0.bin", bytes: Buffer.from("png") }]);
+  assert.equal(result.status, "failed");
+  assert.equal(result.stage, "uploading-artwork");
+  assert.equal(result.errorCode, "APPROVAL_REJECTED");
+  assert.match(result.error, /generated artwork.*APPROVAL_REJECTED/);
+  const base = fixture();
+  const publisher = new BundlePublisher({ repository: "owner/game", task: async (job, ...args) => job.task === "publish" ? result : base.task(job, ...args) });
+  await assert.rejects(publisher.publish(GUILD, () => ({ game: game(), town: town() }), { jobId: "job-safe-failure" }), (error) => {
+    assert.equal(error.stage, "uploading-artwork");
+    assert.equal(error.code, "APPROVAL_REJECTED");
+    return true;
+  });
+});
+
+test("mutation callbacks receive each snapshot's pinned head and branch for concurrent artwork checks", async () => {
+  let conflict = false;
+  const seen = [];
+  const { publisher } = fixture({ beforePublish: async (_job, state) => {
+    if (conflict) return;
+    conflict = true;
+    state.head = "d".repeat(40);
+    state.tree = "e".repeat(40);
+    return { status: "conflict" };
+  } });
+  await publisher.publish(GUILD, ({ head, branch }) => {
+    seen.push({ head, branch });
+    return { game: game(), town: town() };
+  }, { jobId: "job-pinned-assets" });
+  assert.deepEqual(seen, [{ head: HEAD, branch: "latest-default" }, { head: "d".repeat(40), branch: "latest-default" }]);
 });

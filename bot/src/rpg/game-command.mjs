@@ -2,6 +2,7 @@ import { gameConfig } from "./config.mjs";
 import { CodexGameStore } from "./codex-store.mjs";
 import { createImageGenerator } from "./image-generator.mjs";
 import { GameService } from "./game-service.mjs";
+import { CODEX_OWNER_ID } from "./codex-runner.mjs";
 
 function publishingMessage(result) {
   if (result.deployment?.state === "READY") return "The game is live.";
@@ -21,7 +22,7 @@ export const gameCommand = {
     {
       type: 1,
       name: "create",
-      description: "Create this server’s empty town and get its link",
+      description: "Create or complete this server's town (owner only)",
     },
     {
       type: 1,
@@ -79,7 +80,16 @@ export function createGameCommandHandler({
       });
       return true;
     }
+    const owner = interaction.user?.id === CODEX_OWNER_ID;
+    if (interaction.options.getSubcommand() === "create" && !owner) {
+      await interaction.reply({
+        ...reply("Only the bot owner can use /game create."),
+        flags: 64,
+      });
+      return true;
+    }
     if (
+      !owner &&
       !interaction.memberPermissions?.has(32n) &&
       !allowedUserIds.has(interaction.user.id)
     ) {

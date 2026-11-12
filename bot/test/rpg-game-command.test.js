@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createQueuedGameHandler, gameDefinition, jobStatus } from '../src/rpg/queued-game-command.mjs';
+import { CODEX_OWNER_ID } from '../src/rpg/codex-runner.mjs';
+import { createGameCommandHandler } from '../src/rpg/game-command.mjs';
 
 const GUILD = '123456789012345678';
 const REQUESTER = '223456789012345678';
@@ -22,7 +24,7 @@ function interaction(subcommand = 'create', values = {}) {
     guildId: GUILD,
     guild: { name: 'Server Name', members: { fetch: () => assert.fail('Member lookup belongs in the worker') } },
     channelId: CHANNEL,
-    user: { id: REQUESTER },
+    user: { id: values.userId || (subcommand === 'create' ? CODEX_OWNER_ID : REQUESTER) },
     memberPermissions: { has: (permission) => { assert.equal(permission, 32n); return values.manager !== false; } },
     deferred: false,
     replied: false,
@@ -97,7 +99,7 @@ test('failed create resumes with the new interaction and notification recipient 
   const request = interaction();
   const fixture = handlerFixture(request, { previous: queued({ status: 'failed', stage: 'deploying' }) });
   await fixture.handle(request);
-  assert.deepEqual(fixture.calls.resumes, [{ id: 'fixture-job', options: { interactionId: INTERACTION, requesterId: REQUESTER, channelId: CHANNEL } }]);
+  assert.deepEqual(fixture.calls.resumes, [{ id: 'fixture-job', options: { interactionId: INTERACTION, requesterId: CODEX_OWNER_ID, channelId: CHANNEL } }]);
   assert.equal(fixture.calls.enqueues.length, 0);
   assert.match(request.calls.edits[0].content, /resumed/);
 });
@@ -117,15 +119,15 @@ test('failed add resumes only when its generation options match and ignores a se
   assert.equal(different.calls.enqueues[0].payload.description, 'Green shoes');
 });
 
-test('existing successful create returns its playable link and registers the current notification channel', async () => {
+test('existing successful create queues a fresh check for missing building artwork', async () => {
   const request = interaction();
   const previous = queued({ status: 'succeeded', stage: 'ready', result: { url: 'https://game.example/town' } });
   const fixture = handlerFixture(request, { previous });
   await fixture.handle(request);
-  assert.equal(fixture.calls.enqueues.length, 0);
+  assert.equal(fixture.calls.enqueues.length, 1);
   assert.equal(fixture.calls.resumes.length, 0);
-  assert.deepEqual(fixture.calls.registrations, [{ guildId: GUILD, channelId: CHANNEL, name: 'Server Name', gameUrl: previous.result.url }]);
-  assert.match(request.calls.edits[0].content, /https:\/\/game.example\/town/);
+  assert.equal(fixture.calls.registrations.length, 0);
+  assert.match(request.calls.edits[0].content, /Queued your server/);
 });
 
 test('status listings are scoped to the server and ordinary requester', async () => {
@@ -159,14 +161,18 @@ test('link is available to ordinary members and is delegated after acknowledgmen
   assert.equal(fixture.calls.enqueues.length, 0);
 });
 
-test('creation requires Manage Server or configured owner permission while direct messages are acknowledged', async () => {
-  const ordinary = interaction('create', { manager: false });
-  const denied = handlerFixture(ordinary);
-  await denied.handle(ordinary);
-  assert.match(ordinary.calls.edits[0].content, /Manage Server/);
-  assert.equal(denied.calls.enqueues.length, 0);
+test('creation permits only the exact owner ID, including against server managers and configured allowlists', async () => {
+  for (const manager of [true, false]) {
+    const ordinary = interaction('create', { manager, userId: REQUESTER });
+    const denied = handlerFixture(ordinary, { owner: true });
+    await denied.handle(ordinary);
+    assert.match(ordinary.calls.edits[0].content, /Only the bot owner/);
+    assert.equal(ordinary.calls.defers.length, 1);
+    assert.equal(denied.calls.enqueues.length, 0);
+    assert.equal(denied.calls.lists.length, 0);
+  }
   const owner = interaction('create', { manager: false });
-  const permitted = handlerFixture(owner, { owner: true });
+  const permitted = handlerFixture(owner);
   await permitted.handle(owner);
   assert.equal(permitted.calls.enqueues.length, 1);
   const dm = interaction();
@@ -175,6 +181,18 @@ test('creation requires Manage Server or configured owner permission while direc
   await handlerFixture(dm).handle(dm);
   assert.equal(dm.calls.defers.length, 1);
   assert.match(dm.calls.edits[0].content, /Discord server/);
+});
+
+test('the legacy command handler also restricts create to the exact owner', async () => {
+  const request = interaction('create', { userId: REQUESTER });
+  request.isChatInputCommand = () => true;
+  request.reply = async (value) => { request.calls.edits.push(value); };
+  const handler = createGameCommandHandler({
+    service: { create: () => assert.fail('A manager must not reach town generation') },
+    allowedUserIds: new Set([REQUESTER]),
+  });
+  await handler(request);
+  assert.match(request.calls.edits[0].content, /Only the bot owner/);
 });
 
 test('invalid uploads are rejected after acknowledgment and never reach the queue', async () => {

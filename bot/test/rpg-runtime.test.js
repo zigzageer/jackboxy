@@ -95,81 +95,145 @@ async function generationFixture(t) {
     pixels.set([70, 130, 180, 255], offset);
   }
   const png = await sharp(pixels, { raw: { width: 16, height: 16, channels: 4 } }).png().toBuffer();
-  const town = freshTown();
-  town.buildings[0].art = `/games/${GUILD}/town/signature-hall.png`;
-  return { root, directory: path.join(root, 'generated'), png, town };
+  return { root, directory: path.join(root, 'generated'), png, town: freshTown() };
 }
 
-test('native town generation passes only the saved login environment and validates generated transparent PNG assets', async (t) => {
-  const fixture = await generationFixture(t);
-  let calls = 0;
-  const generate = createTownGenerator({
-    codexEnv: { CODEX_HOME: '/saved/codex', CODEX_ENABLED: 'true', OPENAI_API_KEY: 'unused-provider-key', CODEX_API_KEY: 'unused-codex-key' },
-    runnerFactory: (options) => {
-      assert.equal(options.env.CODEX_HOME, '/saved/codex');
-      assert.equal(options.env.OPENAI_API_KEY, undefined);
-      assert.equal(options.env.CODEX_API_KEY, undefined);
-      assert.equal(options.workdir, fixture.directory);
-      assert.match(options.promptForTask(), /image_gen__imagegen/);
-      assert.match(options.promptForTask(), /transparent_background:true/);
-      assert.match(options.promptForTask(), /"channelNames":\["music","art"\]/);
-      assert.doesNotMatch(options.promptForTask(), /private-planning/);
-      return {
-        run: async (_task, { userId }) => {
-          calls++;
-          assert.match(userId, /^\d{17,20}$/);
+function nativeFixtureRunner(fixture, calls, { image = fixture.png, failImage = false, inspect = () => {} } = {}) {
+  return (options) => {
+    const planning = options.workdir === fixture.directory;
+    calls.push({ options, planning });
+    inspect(options, planning);
+    return {
+      run: async (_task, { userId }) => {
+        assert.match(userId, /^\d{17,20}$/);
+        if (planning) {
           const schema = JSON.parse(await readFile(path.join(options.workdir, 'town-v1.schema.json'), 'utf8'));
           assert.equal(schema.title, 'Grapevine server town v1');
-          await mkdir(path.join(options.workdir, 'town'));
-          await writeFile(path.join(options.workdir, 'town/signature-hall.png'), fixture.png);
-          await writeFile(path.join(options.workdir, 'town.json'), JSON.stringify(fixture.town));
-          return { status: 'completed' };
-        },
-        shutdown: async () => {},
-      };
-    },
-  });
-  const output = await generate({ guildId: GUILD, guildName: 'Signal Crew', channelNames: ['music', 'art'], directory: fixture.directory });
-  assert.equal(calls, 1);
-  assert.equal(output.files.length, 1);
-  assert.equal(output.files[0].path, 'town/signature-hall.png');
-  assert.equal((await sharp(output.files[0].bytes).metadata()).format, 'png');
-  assert.equal((await sharp(output.files[0].bytes).stats()).isOpaque, false);
-  assertTown(output.town, GUILD);
-});
-
-test('town generation rejects opaque artwork and a failed native generation result', async (t) => {
-  for (const mode of ['opaque', 'failed']) {
-    const fixture = await generationFixture(t);
-    const generate = createTownGenerator({ runnerFactory: (options) => ({
-      run: async () => {
-        if (mode === 'failed') return { status: 'failed' };
-        await mkdir(path.join(options.workdir, 'town'));
-        const opaque = await sharp({ create: { width: 16, height: 16, channels: 3, background: '#ffffff' } }).png().toBuffer();
-        await writeFile(path.join(options.workdir, 'town/signature-hall.png'), opaque);
-        await writeFile(path.join(options.workdir, 'town.json'), JSON.stringify(fixture.town));
+          const plan = {
+            version: 1,
+            town: structuredClone(fixture.town),
+            buildings: fixture.town.buildings.map((building) => ({ id: building.id, description: `A distinct ${building.kind} for ${building.id} with purpose-specific props.` })),
+          };
+          await writeFile(path.join(options.workdir, 'town-plan.output.json'), JSON.stringify(plan));
+        } else {
+          if (failImage) return { status: 'failed' };
+          await writeFile(path.join(options.workdir, 'native-output.png'), image);
+        }
         return { status: 'completed' };
       },
       shutdown: async () => {},
-    }) });
-    await assert.rejects(generate({ guildId: GUILD, guildName: 'Signal Crew', channelNames: [], directory: fixture.directory }), mode === 'opaque' ? /transparent/ : /could not finish/);
+    };
+  };
+}
+
+const validateFixture = async ({ town, guildId }) => assertTown(town, guildId);
+
+test('native town generation plans once and produces transparent WebP artwork for each building using only the saved login', async (t) => {
+  const fixture = await generationFixture(t);
+  const calls = [];
+  const progress = [];
+  const generate = createTownGenerator({
+    codexEnv: { CODEX_HOME: '/saved/codex', CODEX_ENABLED: 'true', OPENAI_API_KEY: 'unused-provider-key', CODEX_API_KEY: 'unused-codex-key' },
+    validate: validateFixture,
+    runnerFactory: nativeFixtureRunner(fixture, calls, { inspect: (options, planning) => {
+      assert.equal(options.env.CODEX_HOME, '/saved/codex');
+      assert.equal(options.env.OPENAI_API_KEY, undefined);
+      assert.equal(options.env.CODEX_API_KEY, undefined);
+      const prompt = options.promptForTask();
+      assert.doesNotMatch(prompt, /private-planning/);
+      if (planning) {
+        assert.match(prompt, /planning phase only/);
+        assert.match(prompt, /"channelNames":\["music","art"\]/);
+        assert.doesNotMatch(prompt, /image_gen__imagegen/);
+      } else {
+        assert.equal(path.dirname(options.workdir), path.join(fixture.directory, '.building-jobs'));
+        const buildingId = path.basename(options.workdir);
+        assert.ok(fixture.town.buildings.some((building) => building.id === buildingId));
+        assert.match(prompt, /image_gen__imagegen/);
+        assert.match(prompt, /transparent_background:true/);
+        assert.match(prompt, /straight-on orthographic/);
+        assert.match(prompt, /no photorealism, 3D render/);
+        assert.ok(prompt.includes(`purpose-specific props.`));
+        assert.ok(prompt.includes(JSON.stringify(buildingId)));
+      }
+    } }),
+  });
+  const output = await generate({ guildId: GUILD, guildName: 'Signal Crew', channelNames: ['music', 'art'], directory: fixture.directory, onProgress: async (event) => progress.push(event) });
+  assert.equal(calls.filter((call) => call.planning).length, 1);
+  assert.equal(calls.filter((call) => !call.planning).length, fixture.town.buildings.length);
+  assert.equal(output.files.length, fixture.town.buildings.length);
+  assert.deepEqual(output.files.map((file) => file.path), fixture.town.buildings.map((building) => `town/${building.id}.webp`));
+  for (const file of output.files) {
+    assert.equal((await sharp(file.bytes).metadata()).format, 'webp');
+    assert.equal((await sharp(file.bytes).stats()).isOpaque, false);
+  }
+  assert.equal(progress.filter((event) => event.stage === 'building-ready').length, fixture.town.buildings.length);
+  assert.equal(progress.at(-1).stage, 'town-ready');
+  assertTown(output.town, GUILD);
+});
+
+test('town generation reuses complete building caches and repairs a damaged WebP from the saved native image', async (t) => {
+  const fixture = await generationFixture(t);
+  const calls = [];
+  const generate = createTownGenerator({ validate: validateFixture, runnerFactory: nativeFixtureRunner(fixture, calls) });
+  const request = { guildId: GUILD, guildName: 'Signal Crew', channelNames: ['music'], directory: fixture.directory };
+  const first = await generate(request);
+  const nativeCalls = calls.length;
+  const repeated = await generate(request);
+  assert.equal(calls.length, nativeCalls);
+  assert.deepEqual(repeated.town, first.town);
+  const damaged = first.files[0].path;
+  await writeFile(path.join(fixture.directory, damaged), Buffer.from('damaged WebP'));
+  const repaired = await generate(request);
+  assert.equal(calls.length, nativeCalls);
+  const repairedFile = repaired.files.find((file) => file.path === damaged);
+  assert.equal((await sharp(repairedFile.bytes).metadata()).format, 'webp');
+  assert.equal((await sharp(repairedFile.bytes).stats()).isOpaque, false);
+});
+
+test('a rejected planning output containing artwork is replanned on retry', async (t) => {
+  const fixture = await generationFixture(t);
+  await mkdir(path.join(fixture.directory, 'town'), { recursive: true });
+  const rejectedTown = structuredClone(fixture.town);
+  rejectedTown.buildings[0].art = `/games/${GUILD}/town/station-hall.png`;
+  await writeFile(path.join(fixture.directory, 'town/station-hall.png'), fixture.png);
+  await writeFile(path.join(fixture.directory, 'town-plan.output.json'), JSON.stringify({
+    version: 1,
+    town: rejectedTown,
+    buildings: rejectedTown.buildings.map((building) => ({ id: building.id, description: 'A prior rejected planning entry.' })),
+  }));
+  const calls = [];
+  const generate = createTownGenerator({ validate: validateFixture, runnerFactory: nativeFixtureRunner(fixture, calls) });
+  await generate({ guildId: GUILD, guildName: 'Signal Crew', channelNames: [], directory: fixture.directory });
+  assert.equal(calls.filter((call) => call.planning).length, 1);
+  assert.equal(calls.filter((call) => !call.planning).length, fixture.town.buildings.length);
+});
+
+test('per-building town generation rejects opaque artwork and a failed native image result', async (t) => {
+  for (const mode of ['opaque', 'failed']) {
+    const fixture = await generationFixture(t);
+    const opaque = await sharp({ create: { width: 16, height: 16, channels: 3, background: '#ffffff' } }).png().toBuffer();
+    const generate = createTownGenerator({
+      validate: validateFixture,
+      runnerFactory: nativeFixtureRunner(fixture, [], { image: opaque, failImage: mode === 'failed' }),
+    });
+    await assert.rejects(generate({ guildId: GUILD, guildName: 'Signal Crew', channelNames: [], directory: fixture.directory }), mode === 'opaque' ? /transparent/ : /did not finish/);
   }
 });
 
-test('town generation refuses PNGs reached through a symlinked artifact directory', async (t) => {
+test('cached town generation refuses images reached through a symlinked artifact directory', async (t) => {
   const fixture = await generationFixture(t);
   const outside = path.join(fixture.root, 'outside');
   await mkdir(outside);
   await writeFile(path.join(outside, 'signature-hall.png'), fixture.png);
-  const generate = createTownGenerator({ runnerFactory: (options) => ({
-    run: async () => {
-      await symlink(outside, path.join(options.workdir, 'town'), 'dir');
-      await writeFile(path.join(options.workdir, 'town.json'), JSON.stringify(fixture.town));
-      return { status: 'completed' };
-    },
-    shutdown: async () => {},
-  }) });
-  await assert.rejects(generate({ guildId: GUILD, guildName: 'Signal Crew', channelNames: [], directory: fixture.directory }), /image|artifact|directory|outside|symlink/i);
+  await mkdir(fixture.directory);
+  await symlink(outside, path.join(fixture.directory, 'town'), 'dir');
+  const town = structuredClone(fixture.town);
+  town.buildings[0].art = `/games/${GUILD}/town/signature-hall.png`;
+  await writeFile(path.join(fixture.directory, 'town.json'), JSON.stringify(town));
+  const generate = createTownGenerator({ validate: validateFixture, runnerFactory: nativeFixtureRunner(fixture, []) });
+  await assert.rejects(generate({ guildId: GUILD, guildName: 'Signal Crew', channelNames: [], directory: fixture.directory }), /image|artifact|directory|symbolic|symlink/i);
+  assert.deepEqual(await readFile(path.join(outside, 'signature-hall.png')), fixture.png);
 });
 
 function interaction(events, overrides = {}) {

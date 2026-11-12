@@ -93,6 +93,19 @@ export function sanitizeCodexText(value, env = process.env) {
     : text;
 }
 
+function failureDiagnostic(job, summary, env) {
+  const line = job.stderr.split(/\r?\n/).find((value) => /^(?:error:|Error:|Fatal error:)\s/.test(value));
+  const message = line && !/[{}]|https?:/i.test(line)
+    ? sanitizeCodexText(line, env).slice(0, 800)
+    : summary;
+  return {
+    stage: job.sessionStarted ? "codex-session" : "codex-startup",
+    code: job.spawnError || "CODEX_EXEC_FAILED",
+    message,
+    exitCode: job.exitCode ?? null,
+  };
+}
+
 function taskPrompt(request) {
   return `You are maintaining the Jackbox bot repository on this VPS for its authorized Discord owner.
 Diagnose the request below, make the smallest appropriate fix, and run meaningful validation.
@@ -284,6 +297,7 @@ export function createCodexRunner({
         id: job.id,
         status,
         summary,
+        diagnostic: status === "completed" ? null : failureDiagnostic(job, summary, env),
         startedAt: job.startedAt,
         finishedAt: new Date().toISOString(),
       });
@@ -296,6 +310,7 @@ export function createCodexRunner({
       } catch {
         return;
       }
+      if (["thread.started", "turn.started", "item.completed"].includes(event.type)) job.sessionStarted = true;
       if (
         event.type === "item.completed" &&
         event.item?.type === "agent_message" &&
@@ -346,8 +361,7 @@ export function createCodexRunner({
           // changing files after the CLI was cancelled or timed out.
           "--no-daemon",
           "exec",
-          "--sandbox",
-          "workspace-write",
+          ...(autoReview ? ["--approve-for-me"] : ["--sandbox", "workspace-write"]),
           "--json",
           "--color",
           "never",
@@ -356,9 +370,7 @@ export function createCodexRunner({
           "--ignore-user-config",
           "--ignore-rules",
           "--ephemeral",
-          ...(autoReview
-            ? ["--approve-for-me"]
-            : ["-c", 'approval_policy="never"']),
+          ...(!autoReview ? ["-c", 'approval_policy="never"'] : []),
           "-c",
           "sandbox_workspace_write.network_access=true",
           ...extraArgs,

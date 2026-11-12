@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { assertSnowflake, manifestPath } from "./github-store.mjs";
-import { createConnectedGameTask } from "./codex-store.mjs";
+import { createConnectedGameTask, GamePublishError } from "./codex-store.mjs";
 
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_FILES = 64;
@@ -103,6 +103,7 @@ export class BundlePublisher {
       townPath: directory + "town.json",
     }, undefined, { signal });
     signal?.throwIfAborted();
+    if (result.error) throw new GamePublishError(result.stage || "reading-repository", result.error, { code: result.errorCode });
     if (result.status !== "snapshot" || !SHA.test(result.head) || !SHA.test(result.tree))
       throw new Error("Could not read the latest game revision from GitHub.");
     const branch = validBranch(result.branch || this.branch);
@@ -134,6 +135,7 @@ export class BundlePublisher {
   }
 
   deployment(result) {
+    if (result.error) throw new GamePublishError(result.stage || "checking-deployment", result.error, { code: result.errorCode });
     if (result.status !== "published") throw new Error("Could not check game publishing.");
     if (!["READY", "PENDING", "FAILED"].includes(result.deploymentState))
       throw new Error("The game deployment returned an invalid state.");
@@ -159,7 +161,7 @@ export class BundlePublisher {
         let town = current.town;
         let attemptBundle = bundle;
         if (!alreadyApplied) {
-          const changed = await change(structuredClone({ game, town }));
+          const changed = await change(structuredClone({ game, town, head: current.head, branch: current.branch }));
           signal?.throwIfAborted();
           game = changed?.game;
           town = changed?.town ?? null;
@@ -205,6 +207,7 @@ export class BundlePublisher {
           result.commit = latest.head;
         }
         if (result.status === "conflict") continue;
+        if (result.error) throw new GamePublishError(result.stage || "publishing-game", result.error, { code: result.errorCode });
         if (result.status !== "published" || (!alreadyApplied && !SHA.test(result.commit)))
           throw new Error("Could not commit this game update to GitHub.");
         return {
