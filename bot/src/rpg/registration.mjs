@@ -1,7 +1,7 @@
 import { gameDefinition } from './queued-game-command.mjs';
-import { fightDefinition, warDefinition } from './match-commands.mjs';
+import { duelDefinition, fightDefinition, fighterDefinition, leaderboardDefinition, warDefinition } from './match-commands.mjs';
 
-export const serverGameDefinitions = [gameDefinition, fightDefinition, warDefinition];
+export const serverGameDefinitions = [gameDefinition, fightDefinition, duelDefinition, warDefinition, fighterDefinition, leaderboardDefinition];
 
 export async function syncGameCommands(client, guild) {
   const manager = guild ? guild.commands : client.application.commands;

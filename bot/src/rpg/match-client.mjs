@@ -1,8 +1,13 @@
 import https from "node:https";
 import { createHmac } from "node:crypto";
 
+export const MAX_FIGHT_GIF_BYTES = 3_000_000;
+const snowflake = value => typeof value === "string" && /^\d{17,20}$/.test(value);
+const characterId = value => typeof value === "string" && value.length > 0 && value.length <= 100;
+const characterName = value => typeof value === "string" && value.trim().length > 0;
+
 export class MatchServiceError extends Error {
-  constructor(code, status) {
+  constructor(code, status, detail) {
     const messages = {
       NO_LINK: "Link your eligible character first with /game link.",
       ILLEGAL_TURN: "Your character cannot use that ability on this turn.",
@@ -13,7 +18,7 @@ export class MatchServiceError extends Error {
       NOT_CONFIGURED: "The shared game service is waiting for configuration.",
       RETRY_CONFLICT: "This interaction ID was already used for a different match action.",
     };
-    super(messages[code] ?? "The shared game service could not complete this action.");
+    super(detail ?? messages[code] ?? "The shared game service could not complete this action.");
     this.name = "MatchServiceError";
     this.code = code;
     this.status = status;
@@ -63,12 +68,11 @@ function serviceErrorCode(data, status) {
 }
 
 function matchResponse(snapshot, expected = {}) {
-  const validId = value => typeof value === "string" && /^\d{17,20}$/.test(value);
   if (!snapshot || typeof snapshot.id !== "string" || !/^[\w-]{1,64}$/.test(snapshot.id) ||
       !["duel", "war"].includes(snapshot.kind) ||
       !["offered", "signup", "running", "finished", "cancelled"].includes(snapshot.status) ||
       !Array.isArray(snapshot.sides) || snapshot.sides.length !== 2 ||
-      !snapshot.sides.every(side => validId(side.guildId) && Array.isArray(side.players))) {
+      !snapshot.sides.every(side => side && snowflake(side.guildId) && Array.isArray(side.players))) {
     throw new MatchServiceError("INVALID_RESPONSE");
   }
   if ((expected.matchId && snapshot.id !== expected.matchId) ||
@@ -95,6 +99,38 @@ function linkResponse(link, expected) {
   return link;
 }
 
+function jsonResponse(response, showValidation = false) {
+  let data;
+  try { data = JSON.parse(response.bytes.toString("utf8")); }
+  catch { throw new MatchServiceError("INVALID_RESPONSE", response.status); }
+  if (response.status < 200 || response.status >= 300) {
+    const validation = showValidation && [400, 403, 404, 409, 422].includes(response.status);
+    const detail = validation && typeof data?.error === "string"
+      ? data.error.replace(/\s+/g, " ").trim().slice(0, 300) || undefined
+      : undefined;
+    throw new MatchServiceError(serviceErrorCode(data, response.status), response.status, detail);
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new MatchServiceError("INVALID_RESPONSE", response.status);
+  return data;
+}
+
+function fighterResponse(fighter, userId) {
+  if (fighter.userId !== userId || typeof fighter.enabled !== "boolean" ||
+      (fighter.characterId != null && !characterId(fighter.characterId)) ||
+      (fighter.name != null && !characterName(fighter.name)) ||
+      (fighter.enabled && (!fighter.characterId || !fighter.name))) {
+    throw new MatchServiceError("INVALID_RESPONSE");
+  }
+  return fighter;
+}
+
+function characterChoices(choices) {
+  if (!Array.isArray(choices) || !choices.every(choice => characterId(choice?.id) && characterName(choice?.name))) {
+    throw new MatchServiceError("INVALID_RESPONSE");
+  }
+  return choices;
+}
+
 export class MatchClient {
   constructor({ origin, baseUrl, secret, ca, request = https.request, timeoutMs = 15_000, now = Date.now } = {}) {
     const configuredOrigin = origin ?? baseUrl;
@@ -109,7 +145,7 @@ export class MatchClient {
     this.now = now;
   }
 
-  async request(method, pathname, payload) {
+  async signedRequest(method, pathname, payload, { maxBytes = 1_000_000, timeoutMs = this.timeoutMs } = {}) {
     if (!this.origin || !this.secret) throw new MatchServiceError("NOT_CONFIGURED");
     const url = new URL(pathname, this.origin);
     if (url.origin !== this.origin.origin) throw new MatchServiceError("INVALID_REQUEST");
@@ -119,9 +155,9 @@ export class MatchClient {
     const signature = createHmac("sha256", this.secret)
       .update([method, `${url.pathname}${url.search}`, ip, timestamp].join("\n") + "\n")
       .update(body).digest("hex");
-    const response = await new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const request = this.requestTransport(url, {
-        method, ca: this.ca, timeout: this.timeoutMs,
+        method, ca: this.ca, timeout: timeoutMs, signal: AbortSignal.timeout(timeoutMs),
         headers: { "content-type": "application/json", "content-length": body.length,
           "x-mint-ip": ip, "x-mint-time": timestamp, "x-mint-signature": signature },
       }, stream => {
@@ -129,24 +165,25 @@ export class MatchClient {
         let bytes = 0;
         stream.on("data", chunk => {
           bytes += chunk.length;
-          if (bytes > 1_000_000) {
+          if (bytes > maxBytes) {
             stream.destroy(new MatchServiceError("INVALID_RESPONSE", stream.statusCode));
             return;
           }
           chunks.push(chunk);
         });
         stream.on("error", reject);
-        stream.on("end", () => resolve({ status: stream.statusCode, bytes: Buffer.concat(chunks) }));
+        stream.on("end", () => resolve({
+          status: stream.statusCode, contentType: stream.headers?.["content-type"], bytes: Buffer.concat(chunks),
+        }));
       });
       request.on("timeout", () => request.destroy(new Error("Match service request timed out.")));
       request.on("error", reject);
       request.end(body);
     });
-    let data;
-    try { data = JSON.parse(response.bytes.toString("utf8")); }
-    catch { throw new MatchServiceError("INVALID_RESPONSE", response.status); }
-    if (response.status < 200 || response.status >= 300) throw new MatchServiceError(serviceErrorCode(data, response.status), response.status);
-    if (!data || typeof data !== "object" || Array.isArray(data)) throw new MatchServiceError("INVALID_RESPONSE", response.status);
+  }
+
+  async request(method, pathname, payload) {
+    const data = jsonResponse(await this.signedRequest(method, pathname, payload));
     return data.match ?? data.link ?? data;
   }
 
@@ -176,5 +213,74 @@ export class MatchClient {
   joinWar(payload) { return this.action(payload, "join"); }
   async getMatch({ matchId }) {
     return matchResponse(await this.request("GET", `/internal/v1/matches/${encodeURIComponent(matchId)}`), { matchId });
+  }
+
+  async changeFighter(payload) {
+    const { action, memberId, characterId, manageGuild } = payload;
+    const result = jsonResponse(await this.signedRequest("POST", "/internal/v1/fighters", {
+      ...this.identity(payload), action, memberId, characterId, manageGuild,
+    }), true);
+    const fighter = fighterResponse(result, memberId ?? payload.userId);
+    if ((action === "set" && !fighter.enabled) || (action === "pause" && fighter.enabled) ||
+        (action === "assign" && fighter.characterId !== characterId) ||
+        (action !== "pause" && (!fighter.characterId || !fighter.name))) {
+      throw new MatchServiceError("INVALID_RESPONSE");
+    }
+    return fighter;
+  }
+
+  async listFighters({ guildId, timeoutMs }) {
+    const response = await this.signedRequest("GET", `/internal/v1/fighters/${encodeURIComponent(guildId)}`, undefined, { timeoutMs });
+    return characterChoices(jsonResponse(response, true).characters);
+  }
+
+  async getFighter({ guildId, userId, timeoutMs }) {
+    const response = await this.signedRequest("GET", `/internal/v1/fighters/${encodeURIComponent(guildId)}/${encodeURIComponent(userId)}`, undefined, { timeoutMs });
+    const fighter = fighterResponse(jsonResponse(response, true), userId);
+    return { ...fighter, choices: characterChoices(fighter.choices) };
+  }
+
+  async startFight(payload) {
+    const result = jsonResponse(await this.signedRequest("POST", "/internal/v1/fights", {
+      ...this.identity(payload), opponentUserId: payload.opponentUserId,
+    }), true);
+    const match = matchResponse(result.match, {
+      kind: "duel", guildId: payload.guildId, challengerUserId: payload.userId, opponentUserId: payload.opponentUserId,
+    });
+    const winnerUserId = [payload.userId, payload.opponentUserId][match.winnerSide] ?? null;
+    const { score } = result;
+    const replayUrl = typeof match.replayUrl === "string" && URL.parse(match.replayUrl);
+    if (match.mode !== "auto" || match.status !== "finished" || ![0, 1, null].includes(match.winnerSide) ||
+        match.sides.some(side => side.players.length !== 1 || !characterName(side.players[0]?.name)) ||
+        !replayUrl || replayUrl.protocol !== "https:" || replayUrl.username || replayUrl.password || replayUrl.href.length > 500 ||
+        ![0, 1].includes(score?.awarded) || (score.winnerUserId ?? null) !== winnerUserId || (score.awarded && !winnerUserId)) {
+      throw new MatchServiceError("INVALID_RESPONSE");
+    }
+    return { match: { ...match, replayUrl: replayUrl.href }, score };
+  }
+
+  async getFightGif({ matchId, maxBytes = MAX_FIGHT_GIF_BYTES, timeoutMs }) {
+    const response = await this.signedRequest("GET", `/internal/v1/fights/${encodeURIComponent(matchId)}/gif`, undefined, {
+      maxBytes: Math.min(maxBytes, MAX_FIGHT_GIF_BYTES), timeoutMs,
+    });
+    if (response.status === 503) return { status: "unavailable" };
+    if (response.status === 202 && jsonResponse(response).status === "queued") return { status: "queued" };
+    if (response.status !== 200 || !/^image\/gif(?:;|$)/i.test(response.contentType ?? "") ||
+        !/^GIF8[79]a$/.test(response.bytes.subarray(0, 6).toString("ascii"))) {
+      throw new MatchServiceError("INVALID_RESPONSE", response.status);
+    }
+    return { status: "ready", bytes: response.bytes };
+  }
+
+  async getLeaderboard({ guildId, scope }) {
+    const path = scope === "global" ? "global" : `guild/${encodeURIComponent(guildId)}`;
+    const { entries } = jsonResponse(await this.signedRequest("GET", `/internal/v1/leaderboards/${path}`), true);
+    const count = value => Number.isSafeInteger(value) && value >= 0;
+    if (!Array.isArray(entries) || entries.length > 10 || !entries.every(entry =>
+      snowflake(entry?.userId) && characterName(entry.name) && count(entry.rank) && entry.rank > 0 &&
+      count(entry.wins) && count(entry.losses) && count(entry.points))) {
+      throw new MatchServiceError("INVALID_RESPONSE");
+    }
+    return entries;
   }
 }

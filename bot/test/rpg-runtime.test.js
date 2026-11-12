@@ -297,11 +297,21 @@ test('the Ubuntu adapter reports setup failures after acknowledging and resumes 
 });
 
 test('command registration additively upserts global and newly joined guild definitions', async () => {
-  assert.deepEqual(serverGameDefinitions.map((definition) => definition.name), ['game', 'fight', 'war']);
+  const names = ['game', 'fight', 'duel', 'war', 'fighter', 'leaderboard'];
+  assert.deepEqual(serverGameDefinitions.map((definition) => definition.name), names);
   const game = serverGameDefinitions.find((definition) => definition.name === 'game');
   const fight = serverGameDefinitions.find((definition) => definition.name === 'fight');
+  const fighter = serverGameDefinitions.find((definition) => definition.name === 'fighter');
+  const leaderboard = serverGameDefinitions.find((definition) => definition.name === 'leaderboard');
   assert.deepEqual(game.options.map((option) => option.name), ['create', 'add', 'status', 'link']);
-  assert.deepEqual(fight.options.map((option) => option.name), ['challenge', 'ability', 'attack', 'status']);
+  assert.deepEqual(fight.options.map(({ name, required, type }) => ({ name, required, type })), [{ name: 'user', required: true, type: 6 }]);
+  assert.deepEqual(fighter.options.map((option) => option.name), ['set', 'assign', 'pause']);
+  const [set, assign] = fighter.options;
+  assert.equal(set.options[0].required ?? false, false);
+  assert.equal(set.options[0].autocomplete, true);
+  assert.equal(assign.options[1].required, true);
+  assert.equal(assign.options[1].autocomplete, true);
+  assert.deepEqual(leaderboard.options[0].choices.map(({ value }) => value), ['server', 'global']);
   const global = new Map([['unrelated', { name: 'unrelated', description: 'Keep me' }]]);
   const guild = new Map([['unrelated', { name: 'unrelated', description: 'Keep me too' }]]);
   const globalCalls = [];
@@ -312,8 +322,8 @@ test('command registration additively upserts global and newly joined guild defi
   await syncGameCommands(client, joinedGuild);
   assert.equal(global.has('unrelated'), true);
   assert.equal(guild.has('unrelated'), true);
-  assert.deepEqual(globalCalls.map((definition) => definition.name), ['game', 'fight', 'war']);
-  assert.deepEqual(guildCalls.map((definition) => definition.name), ['game', 'fight', 'war']);
+  assert.deepEqual(globalCalls.map((definition) => definition.name), names);
+  assert.deepEqual(guildCalls.map((definition) => definition.name), names);
   for (const definition of globalCalls) {
     assert.deepEqual(definition.contexts, [0]);
     assert.deepEqual(definition.integration_types, [0]);

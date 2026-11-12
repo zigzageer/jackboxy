@@ -9,6 +9,8 @@ import { JobQueue } from './job-queue.mjs';
 import { MatchClient } from './match-client.mjs';
 import { MatchState } from './match-state.mjs';
 import { createMatchCommands } from './match-commands.mjs';
+import { createFightCommands } from './fight-commands.mjs';
+import { FightDelivery } from './fight-delivery.mjs';
 import { createGameProcessor, createJobNotifier } from './game-jobs.mjs';
 import { createQueuedGameHandler } from './queued-game-command.mjs';
 
@@ -24,6 +26,8 @@ export function createGameRuntime(env = process.env, { client, logger = console 
     ca: env.GAME_SERVICE_CA_FILE ? readFileSync(env.GAME_SERVICE_CA_FILE) : undefined,
   });
   const matches = createMatchCommands({ service, state, client, logger });
+  const fightDelivery = new FightDelivery({ databasePath, service, client, logger });
+  const fights = createFightCommands({ service, delivery: fightDelivery });
   const publisher = new BundlePublisher({ ...config, branch: env.GAME_GITHUB_BRANCH || undefined });
   const processGame = createGameProcessor({
     publisher,
@@ -62,19 +66,25 @@ export function createGameRuntime(env = process.env, { client, logger = console 
       if (stopped) throw new Error('Server game workers have stopped.');
       queue.start();
       matches.start();
+      fightDelivery.start();
     },
+    autocomplete: fights.autocomplete,
     async handle(interaction) {
       logger.info?.('[rpg interaction]', JSON.stringify({
         id: interaction.id,
         guildId: interaction.guildId,
         command: interaction.commandName || 'match-button',
       }));
-      return interaction.commandName === 'game' ? games(interaction) : matches.handle(interaction);
+      const command = interaction.commandName;
+      if (command === 'game') return games(interaction);
+      if (command === 'fighter' || command === 'leaderboard' ||
+          (command === 'fight' && !interaction.options.getSubcommand(false))) return fights.handle(interaction);
+      return matches.handle(interaction);
     },
     async stop() {
       if (stopped) return;
       stopped = true;
-      await Promise.all([queue.stop({ cancel: true }), matches.stop()]);
+      await Promise.all([queue.stop({ cancel: true }), matches.stop(), fightDelivery.stop()]);
       queue.close();
       state.close();
     },

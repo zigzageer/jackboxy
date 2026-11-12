@@ -4,7 +4,8 @@ import { games } from './game-manager.js';
 import { voice } from './voice.js';
 import { codexDefinition, handleCodexCommand } from './codex-command.js';
 import { CODEX_OWNER_ID } from './codex-runner.js';
-import { gameDefinition, fightDefinition, warDefinition, createUbuntuGameHandler } from './rpg/ubuntu-adapter.mjs';
+import { createUbuntuGameHandler } from './rpg/ubuntu-adapter.mjs';
+import { serverGameDefinitions } from './rpg/registration.mjs';
 
 const handleServerGame = createUbuntuGameHandler({ ownerId: CODEX_OWNER_ID });
 const debugDefinition = { ...codexDefinition.toJSON(), name: 'debug', contexts: [0], integration_types: [0] };
@@ -54,7 +55,7 @@ export const definitions = [
   new SlashCommandBuilder()
     .setName('jackbox-code')
     .setDescription('Read the room code off the game screen').setDMPermission(false),
-].map((c) => c.toJSON()).concat(gameDefinition, fightDefinition, warDefinition, debugDefinition);
+].map((c) => c.toJSON()).concat(serverGameDefinitions, debugDefinition);
 
 // Re-read on every interaction so edits to games.json apply without a restart.
 function config() {
@@ -62,6 +63,7 @@ function config() {
 }
 
 export async function handleAutocomplete(interaction) {
+  if (interaction.commandName === 'fighter') return handleServerGame.autocomplete(interaction);
   const focused = interaction.options.getFocused(true);
   let result = [];
   try {
@@ -76,7 +78,7 @@ export async function handleAutocomplete(interaction) {
 }
 
 export async function handleCommand(interaction, options = {}) {
-  if (['game', 'fight', 'war'].includes(interaction.commandName)) return handleServerGame(interaction);
+  if (['game', 'fight', 'duel', 'war', 'fighter', 'leaderboard'].includes(interaction.commandName)) return handleServerGame(interaction);
   if (!interaction.guildId) return interaction.reply({ content: 'Use these commands in a server.', flags: MessageFlags.Ephemeral });
   if (['codex', 'debug'].includes(interaction.commandName)) return handleCodexCommand(interaction, options);
   if (interaction.commandName === 'vc') return handleVoiceCommand(interaction);

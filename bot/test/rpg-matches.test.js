@@ -6,7 +6,7 @@ import path from "node:path";
 import https from "node:https";
 import { createHmac } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { createMatchCommands, fightDefinition, warDefinition, gameLinkDefinition } from "../src/rpg/match-commands.mjs";
+import { createMatchCommands, duelDefinition, warDefinition, gameLinkDefinition } from "../src/rpg/match-commands.mjs";
 import { MatchState } from "../src/rpg/match-state.mjs";
 import { MatchClient, MatchServiceError, normalizeMatch } from "../src/rpg/match-client.mjs";
 import { FixtureMatchService } from "./fixtures/rpg-match-service.mjs";
@@ -40,7 +40,6 @@ function interaction({ commandName = "war", subcommand = "challenge", guildId = 
 
 function fixture(t) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "rpg-matches-"));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   let time = Date.parse("2026-11-12T12:00:00Z");
   const now = () => time;
   const databasePath = path.join(directory, "matches.sqlite");
@@ -73,7 +72,11 @@ function fixture(t) {
   }) } };
   const logger = { error() {} };
   let controller = createMatchCommands({ service, state, client, now, pollMs: 1000, logger });
-  t.after(async () => { await controller.stop(); state.close(); });
+  t.after(async () => {
+    await controller.stop();
+    state.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
   return {
     service, messages, client, now,
     get state() { return state; }, get controller() { return controller; },
@@ -121,7 +124,7 @@ function useRawDuelResponses(f) {
 
 test("match slash definitions expose linking, duels, abilities and server wars", () => {
   assert.equal(gameLinkDefinition.name, "link");
-  assert.deepEqual(fightDefinition.options.map(o => o.name), ["challenge", "ability", "attack", "status"]);
+  assert.deepEqual(duelDefinition.options.map(o => o.name), ["challenge", "ability", "attack", "status"]);
   assert.deepEqual(warDefinition.options.map(o => o.name), ["challenge", "status"]);
   assert.deepEqual(warDefinition.contexts, [0]);
 });
@@ -139,7 +142,7 @@ test("linking uses requester identity and rejects another member’s roster char
 
 test("duel target accepts, legal ability reaches shared result, and other identities are rejected", async t => {
   const f = fixture(t);
-  const challenged = await f.command({ commandName: "fight", values: { user: { id: userB } } });
+  const challenged = await f.command({ commandName: "duel", values: { user: { id: userB } } });
   const matchId = challenged.calls.find(c => c.action === "challengeDuel") && [...f.service.matches.keys()][0];
   assert.match(challenged.text, /waiting for acceptance/);
   assert.deepEqual(f.messages[0].payload.allowedMentions, { parse: [], users: [userB] });
@@ -148,13 +151,13 @@ test("duel target accepts, legal ability reaches shared result, and other identi
   assert.equal(wrong.calls.some(c => c.action === "respondMatch"), false);
   const accepted = await f.command({ customId: `mint:match:accept:${matchId}`, userId: userB });
   assert.match(accepted.text, /active/);
-  const illegal = await f.command({ commandName: "fight", subcommand: "ability", userId: userB, values: { match: matchId } });
+  const illegal = await f.command({ commandName: "duel", subcommand: "ability", userId: userB, values: { match: matchId } });
   assert.match(illegal.text, /cannot use that ability on this turn/);
   assert.match(illegal.text, /ability action/);
-  await f.command({ commandName: "fight", subcommand: "ability", values: { match: matchId } });
+  await f.command({ commandName: "duel", subcommand: "ability", values: { match: matchId } });
   await f.command({ commandName: "fight", subcommand: "ability", userId: userB, values: { match: matchId } });
   assert.match(f.messages.at(-1).payload.content, /Replay https:\/\/game.example\/replays\//);
-  const crossGuild = await f.command({ commandName: "fight", subcommand: "status", guildId: guildB, userId: userC, values: { match: matchId } });
+  const crossGuild = await f.command({ commandName: "duel", subcommand: "status", guildId: guildB, userId: userC, values: { match: matchId } });
   assert.match(crossGuild.text, /could not be found/);
 });
 

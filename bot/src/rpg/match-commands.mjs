@@ -17,7 +17,25 @@ export const gameLinkDefinition = {
   options: [{ type: STRING, name: "character", description: "Roster character ID created for you through /game add", required: true, max_length: 100 }],
 };
 
-export const fightDefinition = serverCommand("fight", "Challenge another player or use your linked character’s ability", [
+const memberOption = { type: USER, name: "user", description: "Server member", required: true };
+const characterOption = { type: STRING, name: "character", description: "Roster character", autocomplete: true, max_length: 100 };
+
+export const fightDefinition = serverCommand("fight", "Run an automatic fight against a server member", [memberOption]);
+
+export const fighterDefinition = serverCommand("fighter", "Choose who fights for you in this server", [
+  { type: 1, name: "set", description: "Opt in to automatic fights with one of your characters", options: [characterOption] },
+  { type: 1, name: "assign", description: "Assign a roster character to a member (Manage Server required)",
+    options: [memberOption, { ...characterOption, required: true }] },
+  { type: 1, name: "pause", description: "Opt out of automatic fights in this server" },
+]);
+
+export const leaderboardDefinition = serverCommand("leaderboard", "Show automatic fight rankings", [
+  { type: STRING, name: "scope", description: "Server or global standings", required: true, choices: [
+    { name: "Server", value: "server" }, { name: "Global", value: "global" },
+  ] },
+]);
+
+export const duelDefinition = serverCommand("duel", "Challenge another player or use your linked character’s ability", [
   { type: 1, name: "challenge", description: "Challenge a member to a duel",
     options: [{ type: USER, name: "user", description: "Server member to challenge", required: true }] },
   { type: 1, name: "ability", description: "Use your signature ability on a legal turn",
@@ -87,7 +105,7 @@ function matchSummary(match) {
     const deadline = Number.isFinite(timestamp) ? ` Signup closes <t:${Math.floor(timestamp / 1000)}:R>.` : "";
     return `${label} ${match.id} is accepting players. Minimum ${match.minimumPlayers} per side.${deadline}\nJoin once with your linked character.`;
   }
-  if (match.status === "active") return `${label} ${match.id} is active.${match.turnUserId ? ` It is <@${match.turnUserId}>’s turn.` : ""}\nUse /fight attack or /fight ability with this match ID.`;
+  if (match.status === "active") return `${label} ${match.id} is active.${match.turnUserId ? ` It is <@${match.turnUserId}>’s turn.` : ""}\nUse /duel attack or /duel ability with this match ID.`;
   return `${label} ${match.id} is waiting for acceptance.`;
 }
 
@@ -180,9 +198,10 @@ export function createMatchCommands({ service, state, client, pollMs = 5000, log
   async function handle(interaction) {
     const customId = interaction.customId;
     const isMatchButton = typeof customId === "string" && customId.startsWith("mint:match:");
-    const subcommand = !isMatchButton && interaction.options?.getSubcommand?.();
+    const subcommand = !isMatchButton && interaction.options?.getSubcommand?.(false);
     const isLink = interaction.commandName === "game" && subcommand === "link";
-    if (!isMatchButton && !isLink && !["fight", "war"].includes(interaction.commandName)) return false;
+    const isDuel = interaction.commandName === "duel" || (interaction.commandName === "fight" && Boolean(subcommand));
+    if (!isMatchButton && !isLink && !isDuel && interaction.commandName !== "war") return false;
     if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: 64 });
     let stage = "identity";
     try {
@@ -223,7 +242,7 @@ export function createMatchCommands({ service, state, client, pollMs = 5000, log
         match = await getMatch(interaction.options.getString("match", true), identity.guildId);
         if (state.match(match.id)) match = save(match);
         await interaction.editReply(reply(matchSummary(match)));
-      } else if (interaction.commandName === "fight" && subcommand === "challenge") {
+      } else if (isDuel && subcommand === "challenge") {
         stage = "opponent lookup";
         const opponent = interaction.options.getUser("user", true);
         if (!snowflake(opponent.id) || opponent.id === identity.userId || opponent.bot) throw new MatchServiceError("FORBIDDEN");
@@ -236,7 +255,7 @@ export function createMatchCommands({ service, state, client, pollMs = 5000, log
         stage = "match persistence";
         match = save(match, contextsFor(match, interaction));
         await interaction.editReply(reply(matchSummary(match)));
-      } else if (interaction.commandName === "fight" && ["attack", "ability"].includes(subcommand)) {
+      } else if (isDuel && ["attack", "ability"].includes(subcommand)) {
         stage = "match lookup";
         const matchId = interaction.options.getString("match", true);
         const current = await getMatch(matchId, identity.guildId);

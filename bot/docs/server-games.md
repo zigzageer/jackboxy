@@ -8,10 +8,15 @@ The Ubuntu bot owns commands, generation workers, publishing jobs, and Discord n
 - `/game add user:@member` queues a character. Optional `name`, `desc`, `use-pfp`, and uploaded `image` inputs retain their existing meanings.
 - `/game status job:<id>` checks a saved job. Omit `job` for recent jobs. Members see their own requests, and managers see their server's requests.
 - `/game link character:discord-<your-user-id>` asks the shared service to link an eligible owned roster character.
-- `/fight challenge user:@member` offers an accepted duel.
-- `/fight attack match:<id>` makes a basic attack on a legal turn.
-- `/fight ability match:<id>` uses the linked character's once-per-duel signature move on a legal turn.
-- `/fight status match:<id>` checks a duel and its replay.
+- `/fighter set [character]` opts you into automatic fights with an owned character. Choose a character from autocomplete or omit it to use your default. Characters from `/game add` belong to the member automatically.
+- `/fighter assign user:@member character:<character>` lets a member with Manage Server assign an available roster character. The recipient opts in with `/fighter set`.
+- `/fighter pause` opts you out of automatic fights in this server.
+- `/fight user:@member` runs an automatic fight between two opted-in members. The bot edits its message with the winner, replay, leaderboard points awarded, and a GIF when available.
+- `/leaderboard scope:server` and `/leaderboard scope:global` show the top ten automatic fighters by points.
+- `/duel challenge user:@member` offers a turn-based duel.
+- `/duel attack match:<id>` makes a basic attack on a legal turn.
+- `/duel ability match:<id>` uses the linked character's once-per-duel signature move on a legal turn.
+- `/duel status match:<id>` checks a duel and its replay.
 - `/war challenge server:<guild-id> minimum:<1-24>` offers a server war. The opposing manager accepts using the button in that server.
 - `/war status match:<id>` checks a war and its replay.
 
@@ -38,6 +43,8 @@ Set `GAME_SERVICE_ORIGIN` to the HTTPS service origin and `GAME_SERVICE_CA_FILE`
 The match adapter implements `docs/server-wars-api.md`. Town validation and building-art style references are pinned to `zigzageer/grapevinerpg` commit `d9df0e5092c854620dcd90ea99a594090630e997`. The bundled `tsx` dependency runs the website's TypeScript validator with the VPS Node runtime. Each POST sends the real Discord interaction ID as `requestId`. The HMAC covers method, full path, loopback client IP, timestamp, and exact UTF-8 body bytes. The bot polls the authoritative match GET endpoint, which advances deadlines and returns stored results. Accepting a war starts the service's 120-second signup. The bot forwards Join buttons and terminal results to both recorded guild channels.
 
 The bot persists challenged-user identities alongside the service snapshot so duel acceptance remains tied to Discord IDs after a restart. The service remains authoritative for each action. Participating servers obtain their posting channel when a town job succeeds or an existing town is requested again.
+
+Automatic fight delivery records the Discord interaction, match result, and channel message ID in SQLite. The bot retries the original interaction ID if the service response is lost. It edits the saved message after a restart, using the replay and text result if a GIF is unavailable or exceeds Discord's attachment limit.
 
 ## Verification
 

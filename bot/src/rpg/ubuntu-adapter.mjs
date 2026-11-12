@@ -46,6 +46,15 @@ export function createUbuntuGameHandler({
     client = discordClient;
     initialize(client).start?.();
   };
+  handle.autocomplete = async (interaction) => {
+    let choices = [];
+    try {
+      choices = await initialize(interaction.client).autocomplete(interaction);
+    } catch {
+      logger.error?.('[rpg fighter autocomplete] Could not load characters.');
+    }
+    return interaction.respond(choices);
+  };
   handle.stop = async () => { await handler?.stop?.(); };
   return handle;
 }
