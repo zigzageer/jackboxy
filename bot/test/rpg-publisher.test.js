@@ -276,7 +276,11 @@ test("connected publishing writes roster, town and exact binary artwork in one C
     mcp__codex_apps__github_create_tree: async (request) => { treeRequest = request; return object({ sha: TREE }); },
     mcp__codex_apps__github_create_commit: async (request) => { commits++; assert.equal(request.parent_sha, HEAD); return object({ sha: COMMIT }); },
     mcp__codex_apps__github_update_ref: async (request) => { assert.equal(request.expected_sha, HEAD); assert.equal(request.force, false); return object({}); },
-    mcp__codex_apps__vercel_create_deployment: async () => object({ id: "dpl_fixture", readyState: "READY" }),
+    mcp__codex_apps__vercel_create_deployment: async ({ requestBody }) => {
+      assert.equal(Object.hasOwn(requestBody, "withLatestCommit"), false);
+      assert.deepEqual(requestBody.gitSource, { type: "github", repoId: 1, ref: "main" });
+      return object({ id: "dpl_fixture", readyState: "READY" });
+    },
   })) });
   const result = await task({
     task: "publish", repository: "owner/game", branch: "main", expectedHead: HEAD, baseTree: TREE,
@@ -291,6 +295,25 @@ test("connected publishing writes roster, town and exact binary artwork in one C
   ]);
   assert.deepEqual(Buffer.from(blobRequest.content, "base64"), artwork);
   assert.equal(result.deploymentState, "READY");
+});
+
+test("deployment-only retries create a new build from gitSource without redeployment-only flags", async () => {
+  let deploymentCalls = 0;
+  const task = createConnectedGameTask({ runnerFactory: scriptRunner(() => ({
+    mcp__codex_apps__vercel_create_deployment: async ({ requestBody }) => {
+      deploymentCalls++;
+      assert.equal(Object.hasOwn(requestBody, "withLatestCommit"), false);
+      assert.equal(Object.hasOwn(requestBody, "deploymentId"), false);
+      assert.deepEqual(requestBody.gitSource, { type: "github", repoId: 1, ref: "main" });
+      assert.equal(requestBody.target, "production");
+      return object({ id: "dpl_fixture", readyState: "READY" });
+    },
+  })) });
+  const result = await task({ task: "deploy", repository: "owner/game", branch: "main", vercel: { repositoryId: 1 } });
+  assert.equal(deploymentCalls, 1);
+  assert.equal(result.status, "published");
+  assert.equal(result.deploymentState, "READY");
+  assert.equal(result.commit, null);
 });
 
 test("connected snapshots and conflict reconciliation preserve branch slashes in GitHub ref paths", async () => {

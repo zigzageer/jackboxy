@@ -422,6 +422,83 @@ test('a fully verified live town returns its existing link and preserves every r
   assert.deepEqual(fixture.current.town, document);
 });
 
+test('the same failed job with a committed marker and null result completes from fresh live files and notifies its owner', async (t) => {
+  const ownerId = '573614648239194186';
+  const document = completeTown();
+  document.buildings.push({ id: 'archive-house', label: 'Archive House', kind: 'house', x: 80, y: 80, w: 100, h: 100,
+    door: { x: 130, y: 220 }, art: `/games/${GUILD}/town/archive-house.webp` });
+  const initial = { ...game(), town: { path: `/games/${GUILD}/town.json` }, studioMetadata: { revision: 9, history: ['retained-version'] } };
+  const publishing = publisherFixture({ initialGame: initial, initialTown: document });
+  const head = 'f'.repeat(40);
+  publishing.current.head = head;
+  let snapshots = 0;
+  const snapshot = publishing.publisher.snapshot;
+  publishing.publisher.snapshot = async (...args) => { snapshots++; return snapshot(...args); };
+  const pinnedReads = [];
+  const liveReads = [];
+  const verifyLiveTown = createLiveTownVerifier({ baseUrl: 'https://game.example', fetch: async (url) => {
+    liveReads.push(url.pathname);
+    if (url.pathname.endsWith('/game.json')) return new Response(JSON.stringify(publishing.current.game));
+    if (url.pathname.endsWith('/town.json')) return new Response(JSON.stringify(publishing.current.town));
+    return new Response(WEBP);
+  } });
+  const fixture = await processorFixture(t, { publisherFixture: publishing, verifyLiveTown,
+    readAsset: async (input) => { pinnedReads.push(input); return WEBP; },
+  });
+  const messages = [];
+  const notify = createJobNotifier({ channels: { fetch: async (id) => {
+    assert.equal(id, CHANNEL);
+    return { guildId: GUILD, isTextBased: () => true, send: async (message) => {
+      messages.push(message);
+      return { id: `notification-${messages.length}` };
+    } };
+  } } });
+  let recover = false;
+  const queue = new JobQueue({ databasePath: path.join(fixture.directory, 'recovery.sqlite'), pollMs: 5,
+    notify, process: async (current, context) => {
+      if (!recover) {
+        context.checkpoint({ stage: 'starting-deployment' });
+        throw new Error('Vercel request failed (400).');
+      }
+      assert.equal(current.result, null);
+      return fixture.process(current, context);
+    },
+  });
+  t.after(async () => { await queue.stop(); queue.close(); });
+  const { job: queuedJob } = queue.enqueue({ type: 'create', guildId: GUILD, requesterId: ownerId, channelId: CHANNEL,
+    interactionId: '723456789012345678', payload: { guildName: 'Original Server Name' } });
+  publishing.current.game.botJobs = { [queuedJob.id]: true };
+  queue.start();
+  await until(() => queue.get(queuedJob.id).status === 'failed');
+  await queue.stop();
+  assert.equal(queue.get(queuedJob.id).result, null);
+  assert.equal(queue.get(queuedJob.id).stage, 'starting-deployment');
+  recover = true;
+  assert.equal(queue.resume(queuedJob.id).id, queuedJob.id);
+  queue.start();
+  await until(() => queue.get(queuedJob.id).status === 'succeeded' && queue.get(queuedJob.id).notification?.status === 'sent');
+  const completed = queue.get(queuedJob.id);
+  assert.equal(completed.attempts, 2);
+  assert.equal(completed.requesterId, ownerId);
+  assert.equal(completed.result.url, `https://game.example/${initial.slug}`);
+  assert.equal(snapshots, 1);
+  assert.equal(pinnedReads.length, 5);
+  assert.ok(pinnedReads.every((input) => input.head === head));
+  assert.equal(liveReads.length, 7, 'Live game, town, and all five WebP files are verified');
+  assert.equal(fixture.generated.towns.length, 0);
+  assert.equal(fixture.generated.characters.length, 0);
+  assert.equal(publishing.current.calls.length, 0);
+  assert.equal(publishing.current.statusCalls.length, 0);
+  assert.equal(publishing.current.game.botJobs[queuedJob.id], true);
+  assert.deepEqual(publishing.current.game.studioMetadata, initial.studioMetadata);
+  const completion = messages.find((message) => message.content.includes('Your server’s town is ready'));
+  assert.ok(completion);
+  assert.match(completion.content, new RegExp(`<@${ownerId}>`));
+  assert.match(completion.content, new RegExp(queuedJob.id));
+  assert.deepEqual(completion.allowedMentions, { parse: [], users: [ownerId], roles: [], repliedUser: false });
+  assert.equal(completion.enforceNonce, true);
+});
+
 test('a missing PNG asset is filled with its own WebP while other existing art, URL, layout and roster remain exact', async (t) => {
   const document = completeTown('png');
   const initial = { ...game(), slug: 'original-url', town: { path: `/games/${GUILD}/town.json` }, characters: [{ id: 'keep-roster' }] };

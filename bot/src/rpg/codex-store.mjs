@@ -265,7 +265,6 @@ async function connectedGameTask(directory) {
             name: job.vercel.projectName,
             project: job.vercel.projectId,
             target: "production",
-            withLatestCommit: true,
             gitSource: {
               type: "github",
               repoId: job.vercel.repositoryId,
