@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { Client, Events, GatewayIntentBits } from 'discord.js';
-import { handleAutocomplete, handleCommand } from './commands.js';
+import { handleAutocomplete, handleCommand, handleButton, startServerGames, stopServerGames } from './commands.js';
+import { syncGameCommands } from './rpg/registration.mjs';
 import { loadConfig, configPath } from './config.js';
 import { games } from './game-manager.js';
 import { voice } from './voice.js';
@@ -37,10 +38,30 @@ if (process.env.CONTROL_PUBLIC_URL) {
   console.log(`Browser player and controls listening on port ${port}`);
 }
 
-client.once(Events.ClientReady, (c) => console.log(`Logged in as ${c.user.tag}`));
+client.once(Events.ClientReady, async (c) => {
+  console.log(`Logged in as ${c.user.tag}`);
+  try {
+    startServerGames(c);
+    await syncGameCommands(c);
+    for (const guild of c.guilds.cache.values()) await syncGameCommands(c, guild);
+    console.log('[rpg registration] Server game commands are synchronized.');
+  } catch {
+    console.error('[rpg startup] Workers or command registration failed. A command will report its setup error.');
+  }
+});
+
+client.on(Events.GuildCreate, async (guild) => {
+  try {
+    await syncGameCommands(client, guild);
+    console.log('[rpg registration] Commands synchronized for guild', guild.id);
+  } catch {
+    console.error('[rpg registration] Could not synchronize commands for guild', guild.id);
+  }
+});
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (interaction.isButton()) return await handleButton(interaction);
     if (interaction.isAutocomplete()) return await handleAutocomplete(interaction);
     if (interaction.isChatInputCommand()) return await handleCommand(interaction, {
       // The VPS service uses Restart=on-failure. Finish the Discord reply first,
@@ -67,6 +88,7 @@ let shuttingDown = false;
 async function shutdown(exitCode) {
   if (shuttingDown) return;
   shuttingDown = true;
+  await stopServerGames().catch(() => console.error('[rpg shutdown] Worker shutdown failed.'));
   client.destroy();
   controls?.close();
   controls?.closeAllConnections();

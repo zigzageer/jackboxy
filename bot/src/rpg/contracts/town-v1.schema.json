@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Grapevine server town v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "guildId", "name", "width", "height", "spawn", "palette", "roads", "buildings", "landmarks", "characterSpawns"],
+  "properties": {
+    "version": { "const": 1 },
+    "guildId": { "type": "string", "pattern": "^[0-9]{17,20}$" },
+    "name": { "$ref": "#/$defs/label" },
+    "width": { "type": "integer", "minimum": 900, "maximum": 3600 },
+    "height": { "type": "integer", "minimum": 720, "maximum": 3000 },
+    "spawn": { "$ref": "#/$defs/point" },
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ground", "road", "accent"],
+      "properties": {
+        "ground": { "$ref": "#/$defs/color" },
+        "road": { "$ref": "#/$defs/color" },
+        "accent": { "$ref": "#/$defs/color" }
+      }
+    },
+    "roads": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/rect" } },
+    "buildings": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "kind", "x", "y", "w", "h", "door"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "label": { "$ref": "#/$defs/label" },
+          "kind": { "enum": ["hall", "shop", "venue", "workshop", "house"] },
+          "x": { "$ref": "#/$defs/coordinate" },
+          "y": { "$ref": "#/$defs/coordinate" },
+          "w": { "$ref": "#/$defs/length" },
+          "h": { "$ref": "#/$defs/length" },
+          "door": { "$ref": "#/$defs/point" },
+          "art": { "type": "string", "pattern": "^/games/[0-9]{17,20}/town/[a-z0-9-]+\\.(png|webp)$", "maxLength": 160 }
+        }
+      }
+    },
+    "landmarks": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "kind", "x", "y"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "label": { "$ref": "#/$defs/label" },
+          "kind": { "enum": ["plaza", "garden", "stage"] },
+          "x": { "$ref": "#/$defs/coordinate" },
+          "y": { "$ref": "#/$defs/coordinate" }
+        }
+      }
+    },
+    "characterSpawns": { "type": "array", "minItems": 1, "maxItems": 24, "items": { "$ref": "#/$defs/point" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 40 },
+    "label": { "type": "string", "minLength": 1, "maxLength": 48, "pattern": "\\S" },
+    "color": { "type": "string", "pattern": "^#[a-fA-F0-9]{6}$" },
+    "coordinate": { "type": "integer", "minimum": 0 },
+    "length": { "type": "integer", "minimum": 48 },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "$ref": "#/$defs/coordinate" },
+        "y": { "$ref": "#/$defs/coordinate" }
+      }
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "$ref": "#/$defs/coordinate" },
+        "y": { "$ref": "#/$defs/coordinate" },
+        "w": { "$ref": "#/$defs/length" },
+        "h": { "$ref": "#/$defs/length" }
+      }
+    }
+  }
+}

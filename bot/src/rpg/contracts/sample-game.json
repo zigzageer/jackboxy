@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "guildId": "123456789012345678",
+  "slug": "signal-yard-123456789012345678",
+  "name": "Signal Yard",
+  "updatedAt": "2026-11-12T00:00:00.000Z",
+  "town": { "path": "/games/123456789012345678/town.json" },
+  "characters": []
+}

@@ -13,5 +13,12 @@ const route = DISCORD_GUILD_ID
   ? Routes.applicationGuildCommands(DISCORD_CLIENT_ID, DISCORD_GUILD_ID)
   : Routes.applicationCommands(DISCORD_CLIENT_ID);
 
-await rest.put(route, { body: definitions });
-console.log(`Registered ${definitions.length} command(s) ${DISCORD_GUILD_ID ? `to guild ${DISCORD_GUILD_ID}` : 'globally'}.`);
+try {
+  // POST upserts each name/type while preserving the application's other commands.
+  for (const definition of definitions) await rest.post(route, { body: definition });
+  console.log(`Registered ${definitions.length} command(s) ${DISCORD_GUILD_ID ? `to guild ${DISCORD_GUILD_ID}` : 'globally'}.`);
+} catch (error) {
+  // REST errors can contain request details; log only a token-redacted message.
+  console.error('Command registration failed:', String(error.message || 'Discord API request failed.').replaceAll(DISCORD_TOKEN, '[redacted]'));
+  process.exitCode = 1;
+}
